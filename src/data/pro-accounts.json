@@ -1,0 +1,19 @@
+﻿[
+  { "proName": "Faker", "team": "T1", "role": "MID", "region": "KR", "riotId": "Hide on bush#KR1" },
+  { "proName": "Oner", "team": "T1", "role": "JUNGLE", "region": "KR", "riotId": "T1 Oner#KR1" },
+  { "proName": "Gumayusi", "team": "T1", "role": "ADC", "region": "KR", "riotId": "T1 Gumayusi#KR1" },
+  { "proName": "Keria", "team": "T1", "role": "SUPPORT", "region": "KR", "riotId": "T1 Keria#KR1" },
+  { "proName": "Zeus", "team": "T1", "role": "TOP", "region": "KR", "riotId": "T1 Zeus#KR1" },
+
+  { "proName": "Chovy", "team": "Gen.G", "role": "MID", "region": "KR", "riotId": "GenG Chovy#KR1" },
+  { "proName": "Canyon", "team": "Gen.G", "role": "JUNGLE", "region": "KR", "riotId": "GenG Canyon#KR1" },
+  { "proName": "Kiin", "team": "Gen.G", "role": "TOP", "region": "KR", "riotId": "GenG Kiin#KR1" },
+  { "proName": "Peyz", "team": "Gen.G", "role": "ADC", "region": "KR", "riotId": "GenG Peyz#KR1" },
+  { "proName": "Lehends", "team": "Gen.G", "role": "SUPPORT", "region": "KR", "riotId": "GenG Lehends#KR1" },
+
+  { "proName": "Caps", "team": "G2", "role": "MID", "region": "EUW", "riotId": "G2 Caps#EUW" },
+  { "proName": "Hans sama", "team": "G2", "role": "ADC", "region": "EUW", "riotId": "G2 Hans sama#EUW" },
+
+  { "proName": "Jojopyun", "team": "Cloud9", "role": "MID", "region": "NA", "riotId": "C9 jojopyun#NA1" },
+  { "proName": "Berserker", "team": "Cloud9", "role": "ADC", "region": "NA", "riotId": "C9 Berserker#NA1" }
+]

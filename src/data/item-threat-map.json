@@ -1,0 +1,400 @@
+{
+  "threats": {
+    "burst_assassin": {
+      "description": "Can 100-0 a squishy in under 1 second",
+      "champions": [
+        "Zed",
+        "Fizz",
+        "Talon",
+        "Katarina",
+        "Akali",
+        "LeBlanc",
+        "Kha'Zix",
+        "Rengar",
+        "Evelynn",
+        "Pyke",
+        "Qiyana",
+        "Naafiri",
+        "Blue Kayn"
+      ],
+      "counter_items_by_class": {
+        "ADC": [
+          {
+            "item": "Guardian Angel",
+            "priority": "high",
+            "reason": "Revive prevents assassination from being a guaranteed kill"
+          },
+          {
+            "item": "Immortal Shieldbow",
+            "priority": "medium",
+            "reason": "Shield absorbs burst, lifeline passive"
+          },
+          {
+            "item": "Bloodthirster",
+            "priority": "medium",
+            "reason": "Shield from overheal provides burst absorption"
+          }
+        ],
+        "Mage": [
+          {
+            "item": "Zhonya's Hourglass",
+            "priority": "critical",
+            "reason": "Stasis negates full combo - build this every game vs assassins"
+          },
+          {
+            "item": "Banshee's Veil",
+            "priority": "medium",
+            "reason": "Spell shield blocks engage ability"
+          }
+        ],
+        "Fighter": [
+          {
+            "item": "Death's Dance",
+            "priority": "high",
+            "reason": "Bleeds burst damage over time, prevents one-shot"
+          },
+          {
+            "item": "Sterak's Gage",
+            "priority": "medium",
+            "reason": "Shield scales with HP, good against burst"
+          }
+        ],
+        "Support": [
+          {
+            "item": "Locket of the Iron Solari",
+            "priority": "high",
+            "reason": "Team shield absorbs burst on your carries"
+          }
+        ]
+      },
+      "boot_recommendation": "Mercury's Treads (if AP assassin) or Plated Steelcaps (if AD assassin)"
+    },
+    "heavy_healing": {
+      "description": "One or more champions with significant sustain or healing",
+      "champions": [
+        "Soraka",
+        "Yuumi",
+        "Sona",
+        "Nami",
+        "Aatrox",
+        "Dr. Mundo",
+        "Vladimir",
+        "Warwick",
+        "Fiddlesticks",
+        "Swain",
+        "Sylas",
+        "Maokai",
+        "Illaoi",
+        "Olaf",
+        "Briar",
+        "Red Kayn"
+      ],
+      "counter_items_by_class": {
+        "ADC": [
+          {
+            "item": "Mortal Reminder",
+            "priority": "high",
+            "reason": "Grievous Wounds on every auto attack"
+          },
+          {
+            "item": "Executioner's Calling",
+            "priority": "high",
+            "reason": "Cheap early Grievous Wounds - buy before completing core if 2+ healers",
+            "rush_if": "2+ healing champions on enemy team"
+          }
+        ],
+        "Mage": [
+          {
+            "item": "Morellonomicon",
+            "priority": "high",
+            "reason": "Grievous Wounds on ability damage"
+          },
+          {
+            "item": "Oblivion Orb",
+            "priority": "medium",
+            "reason": "Cheap early component, sit on it until later"
+          }
+        ],
+        "Fighter": [
+          {
+            "item": "Chempunk Chainsword",
+            "priority": "high",
+            "reason": "AD + HP + Grievous Wounds for bruisers"
+          }
+        ],
+        "Tank": [
+          {
+            "item": "Thornmail",
+            "priority": "high",
+            "reason": "Grievous Wounds applied when they attack you"
+          },
+          {
+            "item": "Bramble Vest",
+            "priority": "high",
+            "reason": "Cheap early GW - rush in lane vs healing fighters",
+            "rush_if": "laning against Aatrox, Irelia, Fiora, etc."
+          }
+        ],
+        "Support": [
+          {
+            "item": "Chemtech Putrifier",
+            "priority": "high",
+            "reason": "Applies GW through your shields/heals on allies"
+          }
+        ]
+      },
+      "timing_note": "If 2+ healing champions on enemy team, buy GW component BEFORE completing your first core item. If only 1 healer, GW as 2nd or 3rd item is fine."
+    },
+    "shield_stacking": {
+      "description": "Multiple champions that shield allies frequently",
+      "champions": [
+        "Karma",
+        "Lulu",
+        "Janna",
+        "Ivern",
+        "Seraphine",
+        "Orianna",
+        "Shen",
+        "Nautilus",
+        "Tahm Kench",
+        "Renata Glasc"
+      ],
+      "counter_items_by_class": {
+        "ADC": [
+          {
+            "item": "Serpent's Fang",
+            "priority": "high",
+            "condition": "2+ shield champions on enemy",
+            "reason": "Reduces all shields you damage by 50%"
+          }
+        ],
+        "Assassin": [
+          {
+            "item": "Serpent's Fang",
+            "priority": "critical",
+            "condition": "any shield champion on enemy",
+            "reason": "You NEED to break through shields to assassinate - core item"
+          }
+        ]
+      },
+      "timing_note": "Only worth building if enemy has 2+ shield champions or if you're an assassin. Single shield support is usually not enough to warrant Serpent's."
+    },
+    "heavy_cc": {
+      "description": "Team has excessive crowd control",
+      "champions": [
+        "Leona",
+        "Nautilus",
+        "Amumu",
+        "Sejuani",
+        "Morgana",
+        "Lux",
+        "Ashe",
+        "Veigar",
+        "Thresh",
+        "Braum",
+        "Maokai",
+        "Rell",
+        "Alistar",
+        "Ornn"
+      ],
+      "counter_items_by_class": {
+        "ADC": [
+          {
+            "item": "Quicksilver Sash",
+            "priority": "high",
+            "condition": "suppression or 3+ hard CC",
+            "reason": "Cleanse one CC - essential vs Malzahar/Warwick ult"
+          },
+          {
+            "item": "Mercurial Scimitar",
+            "priority": "medium",
+            "reason": "QSS upgrade - cleanse + movement speed"
+          }
+        ],
+        "ALL": [
+          {
+            "item": "Mercury's Treads",
+            "priority": "high",
+            "reason": "30% tenacity reduces CC duration on every stun, root, and slow"
+          }
+        ]
+      }
+    },
+    "heavy_ap_damage": {
+      "description": "3+ champions dealing primarily magic damage",
+      "champions_condition": "3+ of enemy team are AP damage dealers (Mages, AP Assassins, AP Fighters)",
+      "counter_items_by_class": {
+        "ADC": [
+          {
+            "item": "Wit's End",
+            "priority": "high",
+            "reason": "MR + attack speed + on-hit - perfect for ADCs vs AP"
+          },
+          {
+            "item": "Maw of Malmortius",
+            "priority": "medium",
+            "reason": "MR + AD + magic shield lifeline"
+          }
+        ],
+        "Fighter": [
+          {
+            "item": "Force of Nature",
+            "priority": "high",
+            "reason": "75 MR + movement speed + magic damage reduction stacking"
+          },
+          {
+            "item": "Spirit Visage",
+            "priority": "medium",
+            "reason": "MR + increased healing/shielding received"
+          }
+        ],
+        "Tank": [
+          {
+            "item": "Force of Nature",
+            "priority": "high",
+            "reason": "Best MR tank item"
+          },
+          {
+            "item": "Abyssal Mask",
+            "priority": "medium",
+            "reason": "MR + increases magic damage nearby enemies take"
+          }
+        ]
+      }
+    },
+    "heavy_ad_damage": {
+      "description": "3+ champions dealing primarily physical damage",
+      "counter_items_by_class": {
+        "Mage": [
+          {
+            "item": "Zhonya's Hourglass",
+            "priority": "high",
+            "reason": "65 armor + stasis - essential vs full AD"
+          }
+        ],
+        "Tank": [
+          {
+            "item": "Frozen Heart",
+            "priority": "high",
+            "reason": "110 armor + reduces nearby enemies' attack speed by 20%"
+          },
+          {
+            "item": "Randuin's Omen",
+            "priority": "high",
+            "reason": "Armor + reduces crit damage - essential vs crit ADCs"
+          }
+        ]
+      }
+    },
+    "tank_stacking": {
+      "description": "2+ tanks with high HP/resistances",
+      "champions": [
+        "Ornn",
+        "Cho'Gath",
+        "Sion",
+        "Mundo",
+        "Malphite",
+        "Tahm Kench",
+        "Zac",
+        "Maokai",
+        "Sejuani",
+        "Amumu",
+        "Rammus",
+        "Leona",
+        "Braum",
+        "Rell",
+        "Alistar"
+      ],
+      "counter_items_by_class": {
+        "ADC": [
+          {
+            "item": "Lord Dominik's Regards",
+            "priority": "critical",
+            "condition": "2+ tanks",
+            "reason": "35% armor pen + giant slayer - MUST BUILD vs tanky comps"
+          },
+          {
+            "item": "Blade of the Ruined King",
+            "priority": "high",
+            "reason": "% current HP on-hit shreds tanks"
+          }
+        ],
+        "Mage": [
+          {
+            "item": "Void Staff",
+            "priority": "critical",
+            "condition": "enemies stacking MR",
+            "reason": "40% magic penetration - mandatory vs tanks"
+          },
+          {
+            "item": "Liandry's Torment",
+            "priority": "high",
+            "reason": "% max HP burn - best vs high-HP targets"
+          }
+        ]
+      }
+    },
+    "split_pusher": {
+      "description": "Enemy has a strong split push threat",
+      "champions": [
+        "Fiora",
+        "Tryndamere",
+        "Jax",
+        "Camille",
+        "Yorick",
+        "Nasus",
+        "Gwen",
+        "Shen"
+      ],
+      "counter_items_by_class": {
+        "Tank_Top": [
+          {
+            "item": "Hullbreaker",
+            "priority": "medium",
+            "reason": "Match their split push with your own"
+          },
+          {
+            "item": "Thornmail",
+            "priority": "high",
+            "reason": "Most split pushers rely on auto attacks and healing"
+          }
+        ]
+      }
+    }
+  },
+  "ally_synergies": {
+    "team_has_heavy_peel": {
+      "description": "Your team has 2+ peel/shield/enchanter champions",
+      "champions": [
+        "Lulu",
+        "Janna",
+        "Braum",
+        "Thresh",
+        "Karma",
+        "Renata Glasc",
+        "Nami",
+        "Sona"
+      ],
+      "effect_on_carry": {
+        "recommendation": "Build more raw damage - your team will protect you. Skip defensive items like GA unless enemy has unavoidable burst.",
+        "skip_items": ["Guardian Angel", "Immortal Shieldbow"],
+        "prefer_items": ["Infinity Edge", "Rapid Firecannon", "Lord Dominik's Regards"]
+      }
+    },
+    "team_has_no_frontline": {
+      "description": "No tanks or bruisers - all squishy",
+      "condition": "0 champions tagged as Tank or Fighter on ally team",
+      "effect_on_carry": {
+        "recommendation": "Build at least one defensive item even if ahead. Nobody will peel for you.",
+        "force_items": ["Guardian Angel", "Zhonya's Hourglass"]
+      }
+    },
+    "team_has_engage": {
+      "description": "Team has strong engage (Malphite, Ornn, Leona, etc.)",
+      "effect_on_carry": {
+        "recommendation": "Build for teamfight damage. Your team creates the fights - you clean up.",
+        "prefer_items": ["Runaan's Hurricane", "Infinity Edge"]
+      }
+    }
+  }
+}

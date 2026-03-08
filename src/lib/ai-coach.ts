@@ -1,0 +1,924 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { and, eq, gte } from "drizzle-orm";
+
+import { db, schema } from "@/lib/db";
+import type { CompactedMatchData } from "@/lib/match-compactor";
+import { getItems } from "@/lib/data-dragon";
+import { opggClient } from "@/lib/opgg-mcp";
+import { patchTracker } from "@/lib/patch-tracker";
+import type {
+  EnemyLanerStats,
+  EnemySummary,
+  GameSummary,
+  LiveGameScoutOutput,
+  MatchAnalysisOutput,
+  PatternAnalysisOutput,
+  StatPattern,
+} from "@/lib/types/analysis";
+
+const OPUS_MODEL_VERSION = "claude-opus-4-6-20250610";
+const SONNET_MODEL_VERSION = "claude-sonnet-4-6-20250514";
+const MODEL_VERSION = OPUS_MODEL_VERSION;
+const REQUEST_TIMEOUT_MS = 60_000;
+const MAX_API_RETRIES = 3;
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+type PatternCacheEntry = {
+  expiresAt: number;
+  value: PatternAnalysisOutput;
+};
+
+type ScoutCacheEntry = {
+  expiresAt: number;
+  value: LiveGameScoutOutput;
+};
+
+type JsonRecord = Record<string, unknown>;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function coerceGrade(value: unknown): MatchAnalysisOutput["overall_grade"] {
+  if (typeof value !== "string") {
+    return "N/A";
+  }
+
+  const normalized = value.toUpperCase();
+  if (["A", "B", "C", "D", "F", "N/A"].includes(normalized)) {
+    return normalized as MatchAnalysisOutput["overall_grade"];
+  }
+
+  return "N/A";
+}
+
+function coerceBuildRating(
+  value: unknown,
+): MatchAnalysisOutput["build_analysis"]["rating"] {
+  if (value === "optimal" || value === "suboptimal" || value === "poor") {
+    return value;
+  }
+
+  return "suboptimal";
+}
+
+function fallbackMatchAnalysis(reason = "Analysis is temporarily unavailable."): MatchAnalysisOutput {
+  return {
+    overall_grade: "N/A",
+    summary: reason,
+    key_moments: [],
+    build_analysis: {
+      rating: "suboptimal",
+      explanation: "Build analysis unavailable right now.",
+      suggested_changes: [],
+    },
+    laning_phase: {
+      cs_assessment: "Unavailable",
+      trade_patterns: "Unavailable",
+      tips: ["Try again shortly for full AI laning feedback."],
+    },
+    macro_assessment: {
+      objective_participation: "Unavailable",
+      map_presence: "Unavailable",
+      tips: ["Try again shortly for full AI macro feedback."],
+    },
+    top_3_improvements: [
+      "Review key deaths around objectives.",
+      "Track item spikes before committing to fights.",
+      "Retry analysis when the AI service is available.",
+    ],
+  };
+}
+
+function fallbackPatternAnalysis(reason = "Pattern analysis is temporarily unavailable."): PatternAnalysisOutput {
+  return {
+    patterns: [],
+    overall_coaching_plan: reason,
+  };
+}
+
+function fallbackLiveScout(reason = "Live scout is temporarily unavailable."): LiveGameScoutOutput {
+  return {
+    lane_matchup: {
+      difficulty: "medium",
+      their_win_condition: "Unavailable",
+      your_win_condition: "Unavailable",
+      power_spikes: "Unavailable",
+      key_ability_to_watch: "Unavailable",
+    },
+    enemy_player_tendencies: {
+      playstyle: "Unavailable",
+      exploitable_weaknesses: [],
+      danger_zones: [],
+    },
+    team_fight_plan: {
+      their_comp_identity: "Unavailable",
+      our_comp_identity: "Unavailable",
+      how_to_win_fights: "Unavailable",
+    },
+    recommended_build_path: {
+      core_items: [],
+      reasoning: reason,
+    },
+    three_things_to_remember: ["Play around vision.", "Track cooldowns.", "Protect carries."],
+  };
+}
+
+function extractTextFromAnthropicContent(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((block) => {
+      if (
+        isRecord(block) &&
+        block.type === "text" &&
+        typeof block.text === "string"
+      ) {
+        return block.text;
+      }
+
+      return "";
+    })
+    .join("\n")
+    .trim();
+}
+
+function stripJsonFences(text: string): string {
+  return text.replace(/```json\s*|```\s*/gi, "").trim();
+}
+
+function parseJson(text: string): unknown {
+  return JSON.parse(stripJsonFences(text));
+}
+
+function normalizeMatchAnalysis(value: unknown): MatchAnalysisOutput | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const keyMomentsInput = Array.isArray(value.key_moments) ? value.key_moments : [];
+  const keyMoments: MatchAnalysisOutput["key_moments"] = [];
+
+  for (const entry of keyMomentsInput) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : "";
+    const type = entry.type === "mistake" || entry.type === "good_play" ? entry.type : "mistake";
+    const title = typeof entry.title === "string" ? entry.title : "Key moment";
+    const explanation =
+      typeof entry.explanation === "string" ? entry.explanation : "No explanation provided.";
+    const whatToDoInstead =
+      typeof entry.what_to_do_instead === "string" ? entry.what_to_do_instead : undefined;
+    const winProbImpact =
+      typeof entry.win_prob_impact === "number" ? entry.win_prob_impact : 0;
+
+    keyMoments.push({
+      timestamp,
+      type,
+      title,
+      explanation,
+      what_to_do_instead: whatToDoInstead,
+      win_prob_impact: winProbImpact,
+    });
+  }
+
+  const buildAnalysisInput = isRecord(value.build_analysis) ? value.build_analysis : {};
+  const laningInput = isRecord(value.laning_phase) ? value.laning_phase : {};
+  const macroInput = isRecord(value.macro_assessment) ? value.macro_assessment : {};
+
+  return {
+    overall_grade: coerceGrade(value.overall_grade),
+    summary:
+      typeof value.summary === "string"
+        ? value.summary
+        : "No summary generated.",
+    key_moments: keyMoments,
+    build_analysis: {
+      rating: coerceBuildRating(buildAnalysisInput.rating),
+      explanation:
+        typeof buildAnalysisInput.explanation === "string"
+          ? buildAnalysisInput.explanation
+          : "No build explanation generated.",
+      what_they_built_well:
+        typeof buildAnalysisInput.what_they_built_well === "string"
+          ? buildAnalysisInput.what_they_built_well
+          : undefined,
+      suggested_changes: toStringArray(buildAnalysisInput.suggested_changes),
+    },
+    laning_phase: {
+      cs_assessment:
+        typeof laningInput.cs_assessment === "string"
+          ? laningInput.cs_assessment
+          : "Unavailable",
+      trade_patterns:
+        typeof laningInput.trade_patterns === "string"
+          ? laningInput.trade_patterns
+          : "Unavailable",
+      tips: toStringArray(laningInput.tips),
+    },
+    macro_assessment: {
+      objective_participation:
+        typeof macroInput.objective_participation === "string"
+          ? macroInput.objective_participation
+          : "Unavailable",
+      map_presence:
+        typeof macroInput.map_presence === "string"
+          ? macroInput.map_presence
+          : "Unavailable",
+      tips: toStringArray(macroInput.tips),
+    },
+    top_3_improvements: toStringArray(value.top_3_improvements).slice(0, 3),
+  };
+}
+
+function normalizePatternAnalysis(value: unknown): PatternAnalysisOutput | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const patternsInput = Array.isArray(value.patterns) ? value.patterns : [];
+  const patterns = patternsInput
+    .map((pattern) => {
+      if (!isRecord(pattern)) {
+        return null;
+      }
+
+      const priority =
+        pattern.priority === "high" || pattern.priority === "medium" || pattern.priority === "low"
+          ? pattern.priority
+          : "medium";
+
+      return {
+        pattern_name:
+          typeof pattern.pattern_name === "string" ? pattern.pattern_name : "Unknown pattern",
+        frequency: typeof pattern.frequency === "string" ? pattern.frequency : "Unknown",
+        description:
+          typeof pattern.description === "string"
+            ? pattern.description
+            : "No description provided.",
+        root_cause:
+          typeof pattern.root_cause === "string"
+            ? pattern.root_cause
+            : "No root cause provided.",
+        specific_fix:
+          typeof pattern.specific_fix === "string"
+            ? pattern.specific_fix
+            : "No fix provided.",
+        priority,
+      };
+    })
+    .filter(
+      (pattern): pattern is PatternAnalysisOutput["patterns"][number] =>
+        pattern !== null,
+    );
+
+  return {
+    patterns,
+    overall_coaching_plan:
+      typeof value.overall_coaching_plan === "string"
+        ? value.overall_coaching_plan
+        : "No coaching plan generated.",
+  };
+}
+
+function normalizeLiveScout(value: unknown): LiveGameScoutOutput | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const laneMatchup = isRecord(value.lane_matchup) ? value.lane_matchup : {};
+  const tendencies = isRecord(value.enemy_player_tendencies)
+    ? value.enemy_player_tendencies
+    : {};
+  const teamFightPlan = isRecord(value.team_fight_plan) ? value.team_fight_plan : {};
+  const buildPath = isRecord(value.recommended_build_path)
+    ? value.recommended_build_path
+    : {};
+
+  const difficulty =
+    laneMatchup.difficulty === "easy" ||
+    laneMatchup.difficulty === "medium" ||
+    laneMatchup.difficulty === "hard"
+      ? laneMatchup.difficulty
+      : "medium";
+
+  return {
+    lane_matchup: {
+      difficulty,
+      their_win_condition:
+        typeof laneMatchup.their_win_condition === "string"
+          ? laneMatchup.their_win_condition
+          : "Unavailable",
+      your_win_condition:
+        typeof laneMatchup.your_win_condition === "string"
+          ? laneMatchup.your_win_condition
+          : "Unavailable",
+      power_spikes:
+        typeof laneMatchup.power_spikes === "string" ? laneMatchup.power_spikes : "Unavailable",
+      key_ability_to_watch:
+        typeof laneMatchup.key_ability_to_watch === "string"
+          ? laneMatchup.key_ability_to_watch
+          : "Unavailable",
+    },
+    enemy_player_tendencies: {
+      playstyle:
+        typeof tendencies.playstyle === "string" ? tendencies.playstyle : "Unavailable",
+      exploitable_weaknesses: toStringArray(tendencies.exploitable_weaknesses),
+      danger_zones: toStringArray(tendencies.danger_zones),
+    },
+    team_fight_plan: {
+      their_comp_identity:
+        typeof teamFightPlan.their_comp_identity === "string"
+          ? teamFightPlan.their_comp_identity
+          : "Unavailable",
+      our_comp_identity:
+        typeof teamFightPlan.our_comp_identity === "string"
+          ? teamFightPlan.our_comp_identity
+          : "Unavailable",
+      how_to_win_fights:
+        typeof teamFightPlan.how_to_win_fights === "string"
+          ? teamFightPlan.how_to_win_fights
+          : "Unavailable",
+    },
+    recommended_build_path: {
+      core_items: toStringArray(buildPath.core_items),
+      reasoning: typeof buildPath.reasoning === "string" ? buildPath.reasoning : "Unavailable",
+    },
+    three_things_to_remember: toStringArray(value.three_things_to_remember),
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  if (isRecord(value)) {
+    const sortedKeys = Object.keys(value).sort();
+    return `{${sortedKeys
+      .map((key) => `${key}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+export class AICoach {
+  private client: Anthropic | null;
+  private readonly patternCache = new Map<string, PatternCacheEntry>();
+  private readonly scoutCache = new Map<string, ScoutCacheEntry>();
+
+  constructor(apiKey = process.env.ANTHROPIC_API_KEY) {
+    this.client = apiKey ? new Anthropic({ apiKey }) : null;
+  }
+
+  private isRetryableStatus(status: number | null): boolean {
+    return status === 429 || status === 500 || status === 503;
+  }
+
+  private getErrorStatus(error: unknown): number | null {
+    if (isRecord(error) && typeof error.status === "number") {
+      return error.status;
+    }
+
+    return null;
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+    let timeout: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("Anthropic request timed out.")), timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  private async callAnthropic(
+    prompt: string,
+    maxTokens: number,
+    model = MODEL_VERSION,
+  ): Promise<string> {
+    if (!this.client) {
+      throw new Error("ANTHROPIC_API_KEY is not configured.");
+    }
+
+    for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt += 1) {
+      try {
+        const response = await this.withTimeout(
+          this.client.messages.create({
+            model,
+            max_tokens: maxTokens,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        );
+
+        const usage = response.usage;
+        if (usage) {
+          const inputTokens =
+            typeof usage.input_tokens === "number" ? usage.input_tokens : "unknown";
+          const outputTokens =
+            typeof usage.output_tokens === "number" ? usage.output_tokens : "unknown";
+          console.log(
+            `[AICoach] Token usage model=${model} input=${inputTokens} output=${outputTokens}`,
+          );
+        }
+
+        return extractTextFromAnthropicContent(response.content);
+      } catch (error) {
+        const status = this.getErrorStatus(error);
+        if (attempt < MAX_API_RETRIES && this.isRetryableStatus(status)) {
+          const backoffMs = 2 ** (attempt - 1) * 1000;
+          await sleep(backoffMs);
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw new Error("Anthropic retries exhausted.");
+  }
+
+  private async generateJsonResponse<T>(params: {
+    prompt: string;
+    shorterPrompt: string;
+    normalize: (value: unknown) => T | null;
+    maxTokens: number;
+    model?: string;
+  }): Promise<T> {
+    const firstRaw = await this.callAnthropic(
+      params.prompt,
+      params.maxTokens,
+      params.model ?? MODEL_VERSION,
+    );
+
+    try {
+      const parsed = params.normalize(parseJson(firstRaw));
+      if (parsed) {
+        return parsed;
+      }
+    } catch {
+      // Retry below with shorter prompt.
+    }
+
+    const secondRaw = await this.callAnthropic(
+      params.shorterPrompt,
+      params.maxTokens,
+      params.model ?? MODEL_VERSION,
+    );
+    const parsedSecond = params.normalize(parseJson(secondRaw));
+
+    if (!parsedSecond) {
+      throw new Error("AI response was not valid JSON in the expected schema.");
+    }
+
+    return parsedSecond;
+  }
+
+  private async getCachedMatchAnalysis(
+    matchId: string,
+    playerPuuid: string,
+  ): Promise<MatchAnalysisOutput | null> {
+    if (!process.env.DATABASE_URL) {
+      return null;
+    }
+
+    try {
+      const cutoff = new Date(Date.now() - CACHE_TTL_MS);
+      const cached = await db
+        .select({
+          analysisJson: schema.aiAnalyses.analysisJson,
+        })
+        .from(schema.aiAnalyses)
+        .where(
+          and(
+            eq(schema.aiAnalyses.matchId, matchId),
+            eq(schema.aiAnalyses.puuid, playerPuuid),
+            eq(schema.aiAnalyses.analysisType, "match_review"),
+            gte(schema.aiAnalyses.createdAt, cutoff),
+          ),
+        )
+        .limit(1);
+
+      if (cached.length === 0) {
+        return null;
+      }
+
+      return normalizeMatchAnalysis(cached[0].analysisJson);
+    } catch (error) {
+      console.error("[AICoach] Failed to read cached match analysis:", error);
+      return null;
+    }
+  }
+
+  private async saveCachedMatchAnalysis(params: {
+    matchId: string;
+    playerPuuid: string;
+    analysis: MatchAnalysisOutput;
+  }): Promise<void> {
+    if (!process.env.DATABASE_URL) {
+      return;
+    }
+
+    try {
+      await db
+        .insert(schema.aiAnalyses)
+        .values({
+          matchId: params.matchId,
+          puuid: params.playerPuuid,
+          analysisType: "match_review",
+          analysisJson: params.analysis,
+          coachingText: params.analysis.summary,
+          modelVersion: MODEL_VERSION,
+          createdAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [
+            schema.aiAnalyses.matchId,
+            schema.aiAnalyses.puuid,
+            schema.aiAnalyses.analysisType,
+          ],
+          set: {
+            analysisJson: params.analysis,
+            coachingText: params.analysis.summary,
+            modelVersion: MODEL_VERSION,
+            createdAt: new Date(),
+          },
+        });
+    } catch (error) {
+      console.error("[AICoach] Failed to cache match analysis:", error);
+    }
+  }
+
+  async analyzeMatch(params: {
+    compactedData: CompactedMatchData;
+    formatForPrompt: (data: CompactedMatchData) => string;
+    matchId?: string;
+    playerPuuid?: string;
+    playerChampion?: string;
+    playerItems?: number[];
+    matchPatch?: string;
+    abilityContext?: string;
+  }): Promise<MatchAnalysisOutput> {
+    const {
+      compactedData,
+      formatForPrompt,
+      matchId,
+      playerPuuid,
+      playerChampion,
+      playerItems,
+      matchPatch,
+      abilityContext,
+    } = params;
+
+    if (matchId && playerPuuid) {
+      const cached = await this.getCachedMatchAnalysis(matchId, playerPuuid);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    if (!this.client) {
+      return fallbackMatchAnalysis(
+        "AI analysis is temporarily unavailable because ANTHROPIC_API_KEY is not configured.",
+      );
+    }
+
+    const formattedMatch = formatForPrompt(compactedData);
+    const truncatedMatch =
+      formattedMatch.length > 9000
+        ? `${formattedMatch.slice(0, 9000)}\n[TRUNCATED FOR RETRY]`
+        : formattedMatch;
+
+    const resolvedChampion = playerChampion ?? compactedData.playerInfo.champion;
+    const resolvedItems = playerItems ?? [];
+    const resolvedPatch = matchPatch;
+
+    let championPatchContext: string | null = null;
+    let itemPatchContext: string | null = null;
+    let opggMetaContext: string | null = null;
+    if (resolvedPatch) {
+      try {
+        [championPatchContext, itemPatchContext] = await Promise.all([
+          patchTracker.getPatchContextForChampion(resolvedChampion, resolvedPatch),
+          patchTracker.getPatchContextForItems(resolvedItems, resolvedPatch),
+        ]);
+      } catch (error) {
+        console.warn("[AICoach] Failed to load patch context:", error);
+      }
+    }
+
+    try {
+      const role = compactedData.playerInfo.role;
+      const opggMeta = await opggClient.getChampionMeta(resolvedChampion, role);
+      const itemsById = await getItems();
+      const coreNames = opggMeta.builds.items.coreItems
+        .map((itemId) => itemsById.get(itemId)?.name ?? `Item ${itemId}`)
+        .slice(0, 4);
+      const bootName =
+        opggMeta.builds.items.boots > 0
+          ? itemsById.get(opggMeta.builds.items.boots)?.name ?? `Item ${opggMeta.builds.items.boots}`
+          : "No standard boot";
+      opggMetaContext =
+        `OP.GG current patch baseline (${Math.round(opggMeta.winRate * 100)}% WR, ${opggMeta.sampleSize} games): ` +
+        `Core ${coreNames.join(" -> ") || "N/A"}, Boots ${bootName}, Skill order ${opggMeta.builds.skillOrder || "N/A"}.`;
+    } catch (error) {
+      console.warn("[AICoach] Failed to load OP.GG meta context:", error);
+      opggMetaContext = null;
+    }
+
+    const buildPrompt = (matchText: string) => `
+You are an expert League of Legends coach analyzing a player's ranked game for WinCon.gg.
+
+${matchText}
+
+## Patch Context (current patch changes relevant to this game)
+${championPatchContext ?? "No changes to your champion this patch."}
+${itemPatchContext ?? "No changes to your items this patch."}
+
+## Ability Cooldowns at Time of Death
+${abilityContext ?? "Ability cooldown context unavailable for this match."}
+
+## OP.GG Meta Baseline
+${opggMetaContext ?? "OP.GG meta baseline unavailable for this matchup."}
+
+## Analysis Instructions
+Provide coaching feedback in this exact JSON structure:
+{
+  "overall_grade": "A/B/C/D/F",
+  "summary": "2-3 sentence overall assessment",
+  "key_moments": [
+    {
+      "timestamp": "14:32",
+      "type": "mistake | good_play",
+      "title": "Short title",
+      "explanation": "Why this mattered",
+      "what_to_do_instead": "Only for mistakes",
+      "win_prob_impact": -14
+    }
+  ],
+  "build_analysis": {
+    "rating": "optimal/suboptimal/poor",
+    "explanation": "Analysis based on BOTH team compositions",
+    "what_they_built_well": "...",
+    "suggested_changes": ["..."]
+  },
+  "laning_phase": {
+    "cs_assessment": "...",
+    "trade_patterns": "...",
+    "tips": ["..."]
+  },
+  "macro_assessment": {
+    "objective_participation": "...",
+    "map_presence": "...",
+    "tips": ["..."]
+  },
+  "top_3_improvements": ["...", "...", "..."]
+}
+
+Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation outside the JSON.
+`.trim();
+
+    try {
+      const analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
+        prompt: buildPrompt(formattedMatch),
+        shorterPrompt: buildPrompt(truncatedMatch),
+        normalize: normalizeMatchAnalysis,
+        maxTokens: 4096,
+      });
+
+      if (matchId && playerPuuid) {
+        await this.saveCachedMatchAnalysis({
+          matchId,
+          playerPuuid,
+          analysis,
+        });
+      }
+
+      return analysis;
+    } catch (error) {
+      console.error("[AICoach] analyzeMatch failed:", error);
+      return fallbackMatchAnalysis(
+        "AI analysis is temporarily unavailable. Please retry in a minute.",
+      );
+    }
+  }
+
+  async detectPatterns(params: {
+    playerInfo: { gameName: string; tagLine: string; tier: string; division: string };
+    recentGames: GameSummary[];
+    detectedPatterns: StatPattern[];
+  }): Promise<PatternAnalysisOutput> {
+    const cacheKey = stableStringify(params);
+    const cached = this.patternCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    if (!this.client) {
+      return fallbackPatternAnalysis(
+        "Pattern analysis is unavailable because ANTHROPIC_API_KEY is not configured.",
+      );
+    }
+
+    const prompt = `
+You are an expert League of Legends coach for WinCon.gg.
+Analyze recurring issues across this player's recent ranked games.
+
+PLAYER
+${params.playerInfo.gameName}#${params.playerInfo.tagLine} - ${params.playerInfo.tier} ${params.playerInfo.division}
+
+RECENT_GAMES
+${JSON.stringify(params.recentGames)}
+
+STAT_PATTERNS
+${JSON.stringify(params.detectedPatterns)}
+
+Return ONLY valid JSON in this shape:
+{
+  "patterns": [
+    {
+      "pattern_name": "...",
+      "frequency": "...",
+      "description": "...",
+      "root_cause": "...",
+      "specific_fix": "...",
+      "priority": "high|medium|low"
+    }
+  ],
+  "overall_coaching_plan": "..."
+}
+`.trim();
+
+    const shorterPrompt = `
+You are a League coach. Return only JSON with keys: patterns, overall_coaching_plan.
+Patterns must include: pattern_name, frequency, description, root_cause, specific_fix, priority.
+Input:
+${JSON.stringify({
+  playerInfo: params.playerInfo,
+  recentGames: params.recentGames.slice(0, 8),
+  detectedPatterns: params.detectedPatterns.slice(0, 8),
+})}
+`.trim();
+
+    try {
+      const analysis = await this.generateJsonResponse<PatternAnalysisOutput>({
+        prompt,
+        shorterPrompt,
+        normalize: normalizePatternAnalysis,
+        maxTokens: 2500,
+        model: SONNET_MODEL_VERSION,
+      });
+
+      this.patternCache.set(cacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        value: analysis,
+      });
+
+      return analysis;
+    } catch (error) {
+      console.error("[AICoach] detectPatterns failed:", error);
+      return fallbackPatternAnalysis(
+        "Pattern analysis is temporarily unavailable. Please retry shortly.",
+      );
+    }
+  }
+
+  async scoutLiveGame(params: {
+    ourChampion: string;
+    ourRole: string;
+    ourRank: string;
+    allyTeam: string;
+    enemyTeam: string;
+    allyCompTags: string;
+    enemyCompTags: string;
+    enemyLaner: EnemyLanerStats;
+    allEnemies: EnemySummary[];
+    abilityMatchupContext?: string;
+    matchupGuideSummary?: string;
+    matchupGuideTips?: string[];
+    opggCounterContext?: string;
+  }): Promise<LiveGameScoutOutput> {
+    const cacheKey = stableStringify(params);
+    const cached = this.scoutCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    if (!this.client) {
+      return fallbackLiveScout(
+        "Live scout is unavailable because ANTHROPIC_API_KEY is not configured.",
+      );
+    }
+
+    const prompt = `
+You are an expert League of Legends coach producing a loading-screen scout report for WinCon.gg.
+
+OUR_CHAMPION: ${params.ourChampion}
+OUR_ROLE: ${params.ourRole}
+OUR_RANK: ${params.ourRank}
+ALLY_TEAM: ${params.allyTeam}
+ENEMY_TEAM: ${params.enemyTeam}
+ALLY_COMP_TAGS: ${params.allyCompTags}
+ENEMY_COMP_TAGS: ${params.enemyCompTags}
+ENEMY_LANER: ${JSON.stringify(params.enemyLaner)}
+ALL_ENEMIES: ${JSON.stringify(params.allEnemies)}
+MATCHUP_GUIDE_SUMMARY: ${params.matchupGuideSummary ?? "Unavailable"}
+MATCHUP_GUIDE_TIPS: ${JSON.stringify(params.matchupGuideTips ?? [])}
+ABILITY_MATCHUP_CONTEXT: ${params.abilityMatchupContext ?? "Unavailable"}
+OPGG_COUNTER_CONTEXT: ${params.opggCounterContext ?? "Unavailable"}
+
+Return ONLY valid JSON with this shape:
+{
+  "lane_matchup": {
+    "difficulty": "easy|medium|hard",
+    "their_win_condition": "...",
+    "your_win_condition": "...",
+    "power_spikes": "...",
+    "key_ability_to_watch": "..."
+  },
+  "enemy_player_tendencies": {
+    "playstyle": "...",
+    "exploitable_weaknesses": ["..."],
+    "danger_zones": ["..."]
+  },
+  "team_fight_plan": {
+    "their_comp_identity": "...",
+    "our_comp_identity": "...",
+    "how_to_win_fights": "..."
+  },
+  "recommended_build_path": {
+    "core_items": ["..."],
+    "reasoning": "..."
+  },
+  "three_things_to_remember": ["...", "...", "..."]
+}
+`.trim();
+
+    const shorterPrompt = `
+Return only JSON with keys:
+lane_matchup, enemy_player_tendencies, team_fight_plan, recommended_build_path, three_things_to_remember.
+Input:
+${JSON.stringify({
+  ourChampion: params.ourChampion,
+  ourRole: params.ourRole,
+  ourRank: params.ourRank,
+  allyCompTags: params.allyCompTags,
+  enemyCompTags: params.enemyCompTags,
+  enemyLaner: params.enemyLaner,
+  abilityMatchupContext: params.abilityMatchupContext,
+  matchupGuideTips: params.matchupGuideTips,
+})}
+`.trim();
+
+    try {
+      const analysis = await this.generateJsonResponse<LiveGameScoutOutput>({
+        prompt,
+        shorterPrompt,
+        normalize: normalizeLiveScout,
+        maxTokens: 2500,
+      });
+
+      this.scoutCache.set(cacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        value: analysis,
+      });
+
+      return analysis;
+    } catch (error) {
+      console.error("[AICoach] scoutLiveGame failed:", error);
+      return fallbackLiveScout(
+        "Live scout is temporarily unavailable. Please retry shortly.",
+      );
+    }
+  }
+}
+
+export const aiCoach = new AICoach();

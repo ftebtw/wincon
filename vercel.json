@@ -1,0 +1,28 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/collect",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/compute-stats",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/import-pro-data",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/patch-check",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/pbe-check",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/compute-progress",
+      "schedule": "0 2 * * 1"
+    }
+  ]
+}

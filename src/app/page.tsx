@@ -1,65 +1,128 @@
-import Image from "next/image";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { eq } from "drizzle-orm";
 
-export default function Home() {
+import { SearchBar } from "@/components/SearchBar";
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { HomeLiveBanner } from "@/components/HomeLiveBanner";
+import { db, schema } from "@/lib/db";
+import type { PBEDiffReport } from "@/lib/pbe-diff-engine";
+
+export const metadata: Metadata = {
+  title: {
+    absolute: "WinCon.gg - AI-Powered League of Legends Coaching",
+  },
+  description:
+    "Get AI coaching that tells you exactly what went wrong in your League of Legends games and how to fix it. Win probability analysis, pattern detection, and loading screen scouting.",
+};
+
+const featureCards = [
+  {
+    title: "Match Analysis",
+    description: "Win probability graphs + AI coaching",
+  },
+  {
+    title: "Pattern Detection",
+    description: "Find recurring mistakes across games",
+  },
+  {
+    title: "Loading Screen Scout",
+    description: "Know your enemies before the game starts",
+  },
+];
+
+function parsePBERow(diffReport: unknown): { championChanges: number; itemChanges: number } | null {
+  if (!diffReport || typeof diffReport !== "object") {
+    return null;
+  }
+
+  const report = diffReport as PBEDiffReport;
+  if (!Array.isArray(report.championChanges) || !Array.isArray(report.itemChanges)) {
+    return null;
+  }
+
+  return {
+    championChanges: report.championChanges.length,
+    itemChanges: report.itemChanges.length,
+  };
+}
+
+export default async function Home() {
+  let pbeBanner: { championChanges: number; itemChanges: number; totalChanges: number } | null =
+    null;
+
+  if (process.env.DATABASE_URL) {
+    try {
+      const rows = await db
+        .select({
+          diffReport: schema.pbeDiffs.diffReport,
+          totalChanges: schema.pbeDiffs.totalChanges,
+        })
+        .from(schema.pbeDiffs)
+        .where(eq(schema.pbeDiffs.isLatest, true))
+        .limit(1);
+      const parsed = rows[0] ? parsePBERow(rows[0].diffReport) : null;
+      if (parsed) {
+        pbeBanner = {
+          championChanges: parsed.championChanges,
+          itemChanges: parsed.itemChanges,
+          totalChanges: Number(rows[0]?.totalChanges ?? parsed.championChanges + parsed.itemChanges),
+        };
+      }
+    } catch {
+      pbeBanner = null;
+    }
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="min-h-[calc(100vh-9rem)]">
+      <HomeLiveBanner />
+
+      {pbeBanner ? (
+        <section className="mx-auto w-full max-w-6xl px-4 pt-6">
+          <Link
+            href="/pbe"
+            className="block rounded-lg border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-4 py-3 text-sm text-[#fde68a] transition-colors hover:border-[#f59e0b]/70"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            Upcoming Patch Preview: {pbeBanner.championChanges} champion changes,{" "}
+            {pbeBanner.itemChanges} item changes ({pbeBanner.totalChanges} total) detected on PBE
+            {" "} -&gt; View Preview
+          </Link>
+        </section>
+      ) : null}
+
+      <section className="mx-auto flex w-full max-w-6xl flex-col items-center px-4 pb-20 pt-24 text-center">
+        <h1 className="text-5xl font-semibold tracking-tight text-primary sm:text-6xl">
+          WinCon.gg
+        </h1>
+        <p className="mt-5 max-w-3xl text-base text-muted-foreground sm:text-lg">
+          AI-powered coaching that tells you exactly what went wrong - and how to
+          fix it
+        </p>
+        <div className="mt-10 w-full max-w-2xl">
+          <SearchBar placeholder="Enter Riot ID (e.g., Player#NA1)" />
+          <p className="mt-3 text-sm text-muted-foreground">Try: Faker#KR1</p>
         </div>
-      </main>
+      </section>
+
+      <section className="mx-auto grid w-full max-w-6xl gap-5 px-4 pb-20 md:grid-cols-3">
+        {featureCards.map((feature) => (
+          <Card
+            key={feature.title}
+            className="border-border/70 bg-card/90 transition-colors hover:border-primary/70"
+          >
+            <CardHeader>
+              <CardTitle>{feature.title}</CardTitle>
+              <CardDescription>{feature.description}</CardDescription>
+            </CardHeader>
+          </Card>
+        ))}
+      </section>
     </div>
   );
 }

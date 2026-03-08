@@ -1,0 +1,6 @@
+﻿<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>
+  <rect x='2' y='2' width='60' height='60' rx='12' fill='#0f172a' stroke='#22d3ee' stroke-width='3'/>
+  <circle cx='32' cy='24' r='10' fill='#22d3ee'/>
+  <rect x='12' y='39' width='40' height='14' rx='4' fill='#22d3ee'/>
+  <text x='32' y='49' text-anchor='middle' font-size='8' fill='#0a0e14' font-family='Arial'>CHALLENGER</text>
+</svg>
