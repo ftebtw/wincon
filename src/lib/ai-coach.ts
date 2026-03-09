@@ -200,7 +200,25 @@ function stripJsonFences(text: string): string {
 }
 
 function parseJson(text: string): unknown {
-  return JSON.parse(stripJsonFences(text));
+  const cleaned = stripJsonFences(text);
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      const candidate = cleaned.slice(start, end + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // Try one more permissive pass below.
+      }
+    }
+
+    const withoutTrailingCommas = cleaned.replace(/,\s*([}\]])/g, "$1");
+    return JSON.parse(withoutTrailingCommas);
+  }
 }
 
 function normalizeMatchAnalysis(value: unknown): MatchAnalysisOutput | null {
