@@ -24,7 +24,7 @@ async function main() {
     startDate: getArg("startDate") ?? process.env.BACKTEST_START_DATE ?? "2024-01-01",
     endDate: getArg("endDate") ?? process.env.BACKTEST_END_DATE ?? "2025-12-31",
     leagues: (getArg("leagues") ?? process.env.BACKTEST_LEAGUES ?? "LCK,LCS,LEC,LPL")
-      .split(",")
+      .split(/[,\s]+/)
       .map((value) => value.trim())
       .filter(Boolean),
     useDraftData: (getArg("useDraftData") ?? process.env.BACKTEST_USE_DRAFT_DATA ?? "true") !== "false",

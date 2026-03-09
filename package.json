@@ -13,6 +13,8 @@
     "pro:import": "tsx scripts/import-pro-data.ts",
     "backtest": "tsx scripts/run-backtest.ts",
     "backtest:random": "tsx scripts/run-backtest.ts --sampleSize=200 --randomize=true",
+    "backtest:winprob": "tsx scripts/run-winprob-backtest.ts",
+    "odds:check": "tsx scripts/check-odds-coverage.ts",
     "generate:champion-tags": "tsx scripts/generate-champion-tags.ts"
   },
   "dependencies": {
