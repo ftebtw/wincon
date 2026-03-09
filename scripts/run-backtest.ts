@@ -44,6 +44,7 @@ async function main() {
     sampleSize:
       toNumber(getArg("sampleSize") ?? process.env.BACKTEST_SAMPLE_SIZE, 0) || undefined,
     randomize: (getArg("randomize") ?? process.env.BACKTEST_RANDOMIZE ?? "false") === "true",
+    allowNoOdds: (getArg("allowNoOdds") ?? process.env.BACKTEST_ALLOW_NO_ODDS ?? "false") === "true",
   };
 
   console.log("Running backtest with params:", params);
@@ -56,6 +57,12 @@ async function main() {
   console.log(`Sharpe Ratio: ${result.bettingSimulation.sharpeRatio.toFixed(2)}`);
   console.log(`Total Matches Simulated: ${result.totalMatches}`);
   console.log(`Total Bets Placed: ${result.bettingSimulation.totalBets}`);
+  if (result.totalMatches === 0) {
+    console.warn(
+      "No matches were simulated. This usually means no historical odds were found. " +
+        "Try --allowNoOdds=true for model-only accuracy checks.",
+    );
+  }
 
   await db.insert(schema.backtestResults).values({
     config: params,

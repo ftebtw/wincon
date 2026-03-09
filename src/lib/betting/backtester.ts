@@ -93,6 +93,7 @@ export class Backtester {
     maxBetFraction: number;
     sampleSize?: number;
     randomize?: boolean;
+    allowNoOdds?: boolean;
   }): Promise<BacktestResult> {
     const startDate = toDateRange(params.startDate);
     const endDate = toDateRange(params.endDate);
@@ -158,6 +159,7 @@ export class Backtester {
           bankroll,
           minEdge: params.minEdge,
           maxBetFraction: params.maxBetFraction,
+          allowNoOdds: params.allowNoOdds ?? false,
         },
       );
 
@@ -234,6 +236,7 @@ export class Backtester {
         bankroll: params.initialBankroll,
         minEdge: params.minEdge,
         maxBetFraction: params.maxBetFraction,
+        allowNoOdds: params.allowNoOdds ?? false,
       },
       accuracy,
     );
@@ -275,6 +278,7 @@ export class Backtester {
       bankroll: number;
       minEdge: number;
       maxBetFraction: number;
+      allowNoOdds: boolean;
       disableFeatures?: string[];
     },
   ): Promise<SimulationResult> {
@@ -284,6 +288,27 @@ export class Backtester {
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
 
     if (!preMatch) {
+      if (config.allowNoOdds) {
+        const prediction = await unifiedBettingModel.predict({
+          matchId: match.matchId,
+          fixtureId: match.matchId,
+          team1: match.blueTeam,
+          team2: match.redTeam,
+          league: match.league,
+          side: { team1: "blue" },
+          marketProb: 0.5,
+          event: match.league,
+          disableFeatures: config.disableFeatures,
+        });
+
+        return {
+          skipped: false,
+          predicted: prediction.probability,
+          actual: match.winner === match.blueTeam,
+          bet: null,
+        };
+      }
+
       return {
         skipped: true,
       };
@@ -418,6 +443,7 @@ export class Backtester {
       bankroll: number;
       minEdge: number;
       maxBetFraction: number;
+      allowNoOdds: boolean;
     },
     baselineAccuracy: number,
   ): Promise<BacktestResult["featureImportance"]> {
