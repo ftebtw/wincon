@@ -547,11 +547,24 @@ function normalizeLiveScout(value: unknown): LiveGameScoutOutput | null {
 }
 
 function isFallbackMatchAnalysis(analysis: MatchAnalysisOutput): boolean {
+  const unavailable = (value: string | undefined) =>
+    !value || /unavailable/i.test(value);
   const summary = analysis.summary.toLowerCase();
   if (
     summary.includes("temporarily unavailable") ||
     summary.includes("not configured") ||
     summary.includes("at capacity")
+  ) {
+    return true;
+  }
+
+  if (
+    unavailable(analysis.laning_phase.cs_assessment) ||
+    unavailable(analysis.laning_phase.trade_patterns) ||
+    unavailable(analysis.macro_assessment.objective_participation) ||
+    unavailable(analysis.macro_assessment.map_presence) ||
+    analysis.laning_phase.tips.length === 0 ||
+    analysis.macro_assessment.tips.length === 0
   ) {
     return true;
   }
