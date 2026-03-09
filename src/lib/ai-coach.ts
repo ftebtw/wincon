@@ -22,7 +22,7 @@ const SONNET_MODEL_VERSION = process.env.ANTHROPIC_SONNET_MODEL ?? "claude-sonne
 const MATCH_ANALYSIS_PRIMARY_MODEL =
   process.env.ANTHROPIC_MATCH_ANALYSIS_MODEL ?? SONNET_MODEL_VERSION;
 const MODEL_VERSION = OPUS_MODEL_VERSION;
-const REQUEST_TIMEOUT_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_API_RETRIES = 3;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -909,39 +909,13 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
 `.trim();
 
     try {
-      const fallbackModel =
-        MATCH_ANALYSIS_PRIMARY_MODEL === OPUS_MODEL_VERSION
-          ? SONNET_MODEL_VERSION
-          : OPUS_MODEL_VERSION;
-      let analysis: ParsedResponseWithUsage<MatchAnalysisOutput>;
-      try {
-        analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
-          prompt: buildPrompt(formattedMatch),
-          shorterPrompt: buildPrompt(truncatedMatch),
-          normalize: normalizeMatchAnalysis,
-          maxTokens: 4096,
-          model: MATCH_ANALYSIS_PRIMARY_MODEL,
-        });
-      } catch (error) {
-        if (error instanceof AICircuitBreakerError) {
-          throw error;
-        }
-
-        logger.warn("Primary match analysis model failed, retrying with fallback.", {
-          endpoint: "AICoach.analyzeMatch",
-          primaryModel: MATCH_ANALYSIS_PRIMARY_MODEL,
-          fallbackModel,
-          error: error instanceof Error ? error.message : String(error),
-        });
-
-        analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
-          prompt: buildPrompt(formattedMatch),
-          shorterPrompt: buildPrompt(truncatedMatch),
-          normalize: normalizeMatchAnalysis,
-          maxTokens: 4096,
-          model: fallbackModel,
-        });
-      }
+      const analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
+        prompt: buildPrompt(formattedMatch),
+        shorterPrompt: buildPrompt(truncatedMatch),
+        normalize: normalizeMatchAnalysis,
+        maxTokens: 1800,
+        model: MATCH_ANALYSIS_PRIMARY_MODEL,
+      });
 
       if (matchId && playerPuuid) {
         await this.saveCachedMatchAnalysis({
