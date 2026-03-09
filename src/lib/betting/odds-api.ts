@@ -155,8 +155,12 @@ export class OddsPapiClient {
   private theOddsRegions = process.env.THE_ODDS_API_REGIONS ?? "us,uk,eu,au";
 
   constructor() {
-    this.oddsPapiKey = process.env.ODDSPAPI_API_KEY || "";
-    this.theOddsApiKey = process.env.THE_ODDS_API_KEY || process.env.ODDS_API_KEY || "";
+    this.oddsPapiKey = (process.env.ODDSPAPI_API_KEY || "").trim();
+    this.theOddsApiKey = (
+      process.env.THE_ODDS_API_KEY ||
+      process.env.ODDS_API_KEY ||
+      ""
+    ).trim();
 
     const configuredProvider = (process.env.ODDS_PROVIDER ?? "").toLowerCase();
     if (configuredProvider === "theoddsapi") {

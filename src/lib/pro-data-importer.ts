@@ -205,14 +205,54 @@ function rowValue(row: OracleCsvRow, ...keys: string[]): string | undefined {
 
 export class ProDataImporter {
   async downloadCSV(year: number): Promise<string> {
-    const url = `https://oracleselixir-downloadable-match-data.s3-us-west-2.amazonaws.com/${year}_LoL_esports_match_data_from_OraclesElixir.csv`;
-    const response = await fetch(url, { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error(`Failed to download Oracle's Elixir CSV (${response.status}).`);
+    const legacyUrl = `https://oracleselixir-downloadable-match-data.s3-us-west-2.amazonaws.com/${year}_LoL_esports_match_data_from_OraclesElixir.csv`;
+    const legacyResponse = await fetch(legacyUrl, { cache: "no-store" });
+    if (legacyResponse.ok) {
+      return legacyResponse.text();
     }
 
-    return response.text();
+    // Oracle migrated downloadable files to Google Drive.
+    const folderUrl = "https://drive.google.com/drive/u/1/folders/1gLSw0RLjBbtaNy0dgnGQDAZOHIgCe-HH";
+    const folderResponse = await fetch(folderUrl, { cache: "no-store" });
+    if (!folderResponse.ok) {
+      throw new Error(
+        `Failed to download Oracle CSV list from Drive (${folderResponse.status}).`,
+      );
+    }
+
+    const folderHtml = await folderResponse.text();
+    const ids = Array.from(
+      folderHtml.matchAll(/file\\\/d\\\/([A-Za-z0-9_-]{20,})/g),
+      (match) => match[1],
+    );
+    const years = Array.from(
+      folderHtml.matchAll(/(\d{4})_LoL_esports_match_data_from_OraclesElixir\.csv/g),
+      (match) => Number(match[1]),
+    );
+
+    const uniqueIds = Array.from(new Set(ids));
+    const uniqueYears = Array.from(new Set(years));
+    const byYear = new Map<number, string>();
+    for (let index = 0; index < Math.min(uniqueIds.length, uniqueYears.length); index += 1) {
+      byYear.set(uniqueYears[index], uniqueIds[index]);
+    }
+
+    const fileId = byYear.get(year);
+    if (!fileId) {
+      throw new Error(
+        `Could not find Oracle CSV for ${year} in Drive folder (available years: ${uniqueYears.join(", ")}).`,
+      );
+    }
+
+    const driveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    const driveResponse = await fetch(driveDownloadUrl, { cache: "no-store" });
+    if (!driveResponse.ok) {
+      throw new Error(
+        `Failed to download Oracle CSV from Drive (${driveResponse.status}) for year ${year}.`,
+      );
+    }
+
+    return driveResponse.text();
   }
 
   async parseAndImport(csvText: string): Promise<ImportReport> {
