@@ -107,10 +107,11 @@ export function MiniMap({
       style={{ aspectRatio: `${width}/${height}` }}
     >
       <Image
-        src="/summoners-rift.svg"
+        src="/summoners-rift-minimap.png"
         alt="Summoner's Rift minimap"
         fill
-        className="object-cover opacity-90"
+        className="object-cover opacity-95"
+        priority
       />
 
       {deathPoints.map((death) => {
