@@ -209,7 +209,9 @@ export class CachedRiotAPI {
       priority,
     });
 
-    this.trackSummonerIdMapping(summoner.id, puuid);
+    if (summoner.id) {
+      this.trackSummonerIdMapping(summoner.id, puuid);
+    }
     return summoner;
   }
 
@@ -228,23 +230,24 @@ export class CachedRiotAPI {
     });
 
     this.trackKeyForPuuid(summoner.puuid, key);
-    this.trackSummonerIdMapping(summoner.id, summoner.puuid);
+    if (summoner.id) {
+      this.trackSummonerIdMapping(summoner.id, summoner.puuid);
+    }
     return summoner;
   }
 
   async getRankedStats(
-    summonerId: string,
+    puuid: string,
     platform = "na1",
     priority: RateLimitPriority = "high",
   ): Promise<LeagueEntryDto[]> {
-    const key = `riot:ranked:${summonerId}:${platform}`;
-    const puuidsForSummoner = this.puuidsBySummonerId.get(summonerId);
+    const key = `riot:ranked:${puuid}:${platform}`;
 
     return this.fromCacheOrRiot<LeagueEntryDto[]>({
       key,
       ttlSeconds: TTL_SECONDS.ranked,
-      loader: () => this.client.getRankedStats(summonerId, platform),
-      indexByPuuid: puuidsForSummoner ? Array.from(puuidsForSummoner) : undefined,
+      loader: () => this.client.getRankedStats(puuid, platform),
+      indexByPuuid: [puuid],
       priority,
     });
   }
@@ -330,10 +333,20 @@ export class CachedRiotAPI {
     platform = "na1",
     priority: RateLimitPriority = "high",
   ): Promise<CurrentGameInfoDto | null> {
-    return this.rateLimiter.execute(
+    const key = `riot:active-game:${puuid}:${platform}`;
+
+    const cached = await this.getCached<CurrentGameInfoDto | null>(key);
+    if (cached !== null) {
+      return cached;
+    }
+
+    const activeGame = await this.rateLimiter.execute(
       () => this.client.getActiveGame(puuid, platform),
       priority,
     );
+
+    await this.setCached(key, activeGame, 20);
+    return activeGame;
   }
 
   async getChampionMastery(

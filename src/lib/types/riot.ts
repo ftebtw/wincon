@@ -5,8 +5,8 @@ export interface AccountDto {
 }
 
 export interface SummonerDto {
-  id: string;
-  accountId: string;
+  id?: string;
+  accountId?: string;
   puuid: string;
   profileIconId: number;
   revisionDate: number;
@@ -15,8 +15,9 @@ export interface SummonerDto {
 
 export interface LeagueEntryDto {
   leagueId: string;
-  summonerId: string;
-  summonerName: string;
+  summonerId?: string;
+  summonerName?: string;
+  puuid?: string;
   queueType: string;
   tier: string;
   rank: string;

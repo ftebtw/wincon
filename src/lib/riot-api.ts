@@ -168,10 +168,10 @@ export class RiotAPIClient {
   }
 
   async getRankedStats(
-    summonerId: string,
+    puuid: string,
     platform = getRegionConfig(this.defaultRegion).platform,
   ): Promise<LeagueEntryDto[]> {
-    const url = `${this.platformBaseUrl(platform)}/lol/league/v4/entries/by-summoner/${encodeURIComponent(summonerId)}`;
+    const url = `${this.platformBaseUrl(platform)}/lol/league/v4/entries/by-puuid/${encodeURIComponent(puuid)}`;
     const response = await this.request<LeagueEntryDto[]>(url);
     return response as LeagueEntryDto[];
   }

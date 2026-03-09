@@ -436,7 +436,7 @@ async function fetchEnemyStats(params: {
   ]);
 
   const rankedEntries = summonerResult
-    ? await cachedRiotAPI.getRankedStats(summonerResult.id, platform).catch(() => [])
+    ? await cachedRiotAPI.getRankedStats(summonerResult.puuid, platform).catch(() => [])
     : [];
   const rank = rankLabelFromEntries(rankedEntries);
 
@@ -674,7 +674,7 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
       tagLine,
       selectedRegion,
     );
-    const { summoner, platform, region } = await fetchSummonerWithFallback(
+    const { platform, region } = await fetchSummonerWithFallback(
       account.puuid,
       tagLine,
       selectedRegion,
@@ -682,7 +682,7 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
 
     const [activeGame, ourRankedStats, championsById, spellsMap, itemsMap] = await Promise.all([
       cachedRiotAPI.getActiveGame(account.puuid, platform),
-      cachedRiotAPI.getRankedStats(summoner.id, platform).catch(() => []),
+      cachedRiotAPI.getRankedStats(account.puuid, platform).catch(() => []),
       getChampions(),
       getSummonerSpells(),
       getItems(),

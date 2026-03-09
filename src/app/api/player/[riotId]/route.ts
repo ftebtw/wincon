@@ -281,7 +281,7 @@ async function persistPlayerSnapshot(params: {
           puuid,
           gameName,
           tagLine,
-          summonerId: summoner.id,
+          summonerId: summoner.id ?? puuid,
           profileIconId: summoner.profileIconId,
           summonerLevel: summoner.summonerLevel,
           region,
@@ -292,7 +292,7 @@ async function persistPlayerSnapshot(params: {
           set: {
             gameName,
             tagLine,
-            summonerId: summoner.id,
+            summonerId: summoner.id ?? puuid,
             profileIconId: summoner.profileIconId,
             summonerLevel: summoner.summonerLevel,
             region,
@@ -435,7 +435,7 @@ export async function GET(request: Request, { params }: PlayerRouteContext) {
     );
 
     const [rankedStats, matchIds, activeGame] = await Promise.all([
-      cachedRiotAPI.getRankedStats(summoner.id, platform),
+      cachedRiotAPI.getRankedStats(account.puuid, platform),
       cachedRiotAPI.getMatchIds(account.puuid, { count: 20, queue: 420 }, region),
       cachedRiotAPI.getActiveGame(account.puuid, platform),
     ]);
@@ -499,6 +499,13 @@ export async function GET(request: Request, { params }: PlayerRouteContext) {
     return NextResponse.json(response);
   } catch (error) {
     if (error instanceof RiotAPIError) {
+      console.error("[PlayerRoute] RiotAPIError", {
+        status: error.status,
+        message: error.message,
+        url: error.url,
+        retryAfter: error.retryAfter,
+      });
+
       if (error.status === 404) {
         return NextResponse.json(
           { error: `Player ${gameName}#${tagLine} was not found.` },
@@ -567,6 +574,13 @@ export async function GET(request: Request, { params }: PlayerRouteContext) {
       if (error.status === 503 || error.status === 500) {
         return NextResponse.json(
           { error: "Riot API service is temporarily unavailable." },
+          { status: 503 },
+        );
+      }
+
+      if (error.status === 401 || error.status === 403) {
+        return NextResponse.json(
+          { error: "Riot API key is invalid or expired. Please rotate RIOT_API_KEY." },
           { status: 503 },
         );
       }
