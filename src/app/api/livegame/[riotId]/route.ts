@@ -654,6 +654,63 @@ function uniqueLines(lines: string[]): string[] {
   return result;
 }
 
+function isUnavailableText(value: string | undefined | null): boolean {
+  if (!value) {
+    return true;
+  }
+
+  return /unavailable/i.test(value);
+}
+
+function firstAvailable(...values: Array<string | undefined | null>): string {
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    const normalized = value.trim();
+    if (!normalized || isUnavailableText(normalized)) {
+      continue;
+    }
+    return normalized;
+  }
+
+  return "Unavailable";
+}
+
+const ALIAS_FALLBACK_BY_CHAMPION = new Map<string, string>([
+  ["nunuwillump", "nunu"],
+  ["wukong", "monkeyking"],
+  ["renataglasc", "renata"],
+  ["jarvaniv", "jarvaniv"],
+  ["drmundo", "drmundo"],
+  ["twistedfate", "twistedfate"],
+  ["xinzhao", "xinzhao"],
+]);
+
+async function resolveChampionAlias(
+  championId: number,
+  championName: string,
+): Promise<string | undefined> {
+  try {
+    const champion = await cdragonService.getChampion(championId, "latest");
+    if (champion.alias) {
+      return champion.alias;
+    }
+  } catch {
+    // Fallback below.
+  }
+
+  const normalized = normalizeChampionName(championName);
+  if (/^champion\d+$/.test(normalized)) {
+    return undefined;
+  }
+  if (ALIAS_FALLBACK_BY_CHAMPION.has(normalized)) {
+    return ALIAS_FALLBACK_BY_CHAMPION.get(normalized);
+  }
+
+  return championName.replace(/[^A-Za-z0-9]/g, "");
+}
+
 function formatCounterList(
   values: Array<{ championName: string; winRate: number }>,
   max = 3,
@@ -1029,15 +1086,67 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
       ...(matchupGuide?.tips?.slice(0, 2) ?? []),
       ...aiScout.three_things_to_remember,
     ]).slice(0, 3);
+    const fallbackFightPlan = `Play to ${compAnalysis.ally.teamIdentity}. Deny ${compAnalysis.enemy.teamIdentity} win condition by tracking key cooldowns and fighting on your spike timings.`;
     const hydratedScout = {
       ...aiScout,
       lane_matchup: {
         ...aiScout.lane_matchup,
-        key_ability_to_watch:
-          aiScout.lane_matchup.key_ability_to_watch === "Unavailable" &&
-          matchupGuide?.abilityTradeWindows?.dangerAbility
-            ? matchupGuide.abilityTradeWindows.dangerAbility
-            : aiScout.lane_matchup.key_ability_to_watch,
+        their_win_condition: firstAvailable(
+          aiScout.lane_matchup.their_win_condition,
+          matchupGuide?.earlyGame?.tradingPattern,
+          `${laneOpponent.championName} can punish if you overextend early.`,
+        ),
+        your_win_condition: firstAvailable(
+          aiScout.lane_matchup.your_win_condition,
+          matchupGuide?.earlyGame?.levels1to3,
+          `Play around ${ourParticipant.championName} spikes and trade on cooldown windows.`,
+        ),
+        power_spikes: firstAvailable(
+          aiScout.lane_matchup.power_spikes,
+          matchupGuide?.levelSixSpike,
+          "Play around level 6 and first-item timing for your role.",
+        ),
+        key_ability_to_watch: firstAvailable(
+          aiScout.lane_matchup.key_ability_to_watch,
+          matchupGuide?.abilityTradeWindows?.dangerAbility,
+          `${laneOpponent.championName}'s key engage cooldown.`,
+        ),
+      },
+      enemy_player_tendencies: {
+        ...aiScout.enemy_player_tendencies,
+        playstyle: firstAvailable(
+          aiScout.enemy_player_tendencies.playstyle,
+          laneOpponentStats.playstyle,
+          "balanced",
+        ),
+      },
+      team_fight_plan: {
+        ...aiScout.team_fight_plan,
+        their_comp_identity: firstAvailable(
+          aiScout.team_fight_plan.their_comp_identity,
+          compAnalysis.enemy.teamIdentity,
+        ),
+        our_comp_identity: firstAvailable(
+          aiScout.team_fight_plan.our_comp_identity,
+          compAnalysis.ally.teamIdentity,
+        ),
+        how_to_win_fights: firstAvailable(
+          aiScout.team_fight_plan.how_to_win_fights,
+          fallbackFightPlan,
+        ),
+      },
+      recommended_build_path: {
+        ...aiScout.recommended_build_path,
+        reasoning: firstAvailable(
+          aiScout.recommended_build_path.reasoning,
+          contextualBuild
+            ? `Contextual build generated from full draft: ${contextualBuild.buildOrder
+                .slice(0, 2)
+                .map((entry) => entry.instruction)
+                .join(" ")}`
+            : undefined,
+          "Prioritize core spikes, then adapt defensively to enemy threats.",
+        ),
       },
       three_things_to_remember:
         mergedThreeThings.length > 0 ? mergedThreeThings : aiScout.three_things_to_remember,
@@ -1049,21 +1158,10 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
       role: ourParticipant.role,
     });
 
-    const cdragonChampions = await cdragonService
-      .getChampionList("latest")
-      .catch(() => []);
-    const aliasByChampionName = new Map(
-      cdragonChampions.map((champion) => [
-        normalizeChampionName(champion.name),
-        champion.alias,
-      ]),
-    );
-    const ourAlias = aliasByChampionName.get(
-      normalizeChampionName(ourParticipant.championName),
-    );
-    const enemyAlias = aliasByChampionName.get(
-      normalizeChampionName(laneOpponent.championName),
-    );
+    const [ourAlias, enemyAlias] = await Promise.all([
+      resolveChampionAlias(ourParticipant.championId, ourParticipant.championName),
+      resolveChampionAlias(laneOpponent.championId, laneOpponent.championName),
+    ]);
     const abilityIcons = {
       our: buildAbilityIconSet(ourAlias),
       enemy: buildAbilityIconSet(enemyAlias),

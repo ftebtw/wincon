@@ -289,19 +289,11 @@ export async function getSummonerSpells(): Promise<Map<string, SpellData>> {
 }
 
 export function getChampionIconUrl(championName: string): string {
-  const normalized = normalizeChampionName(championName);
-  const champion = championsByNameCache?.get(normalized);
-
-  if (champion) {
-    return champion.iconUrl;
-  }
-
-  const sanitizedId = championName.replace(/[^A-Za-z0-9]/g, "");
-  return `${DATA_DRAGON_BASE_URL}/cdn/${getKnownVersion()}/img/champion/${sanitizedId}.png`;
+  return `/api/assets/champion/${encodeURIComponent(championName)}`;
 }
 
 export function getItemIconUrl(itemId: number): string {
-  return `${DATA_DRAGON_BASE_URL}/cdn/${getKnownVersion()}/img/item/${itemId}.png`;
+  return `/api/assets/item/${itemId}`;
 }
 
 export function getProfileIconUrl(iconId: number): string {

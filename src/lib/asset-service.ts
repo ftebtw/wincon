@@ -37,7 +37,7 @@ export class AssetService {
 
   getAbilityIcon(championAlias: string, abilitySlot: "P" | "Q" | "W" | "E" | "R"): string {
     const alias = championAlias.toLowerCase();
-    const slot = abilitySlot.toLowerCase();
+    const slot = abilitySlot === "P" ? "passive" : abilitySlot.toLowerCase();
     return cdragonService.getAssetUrl(
       `/game/assets/characters/${alias}/hud/icons2d/${alias}_${slot}.png`,
       "latest",

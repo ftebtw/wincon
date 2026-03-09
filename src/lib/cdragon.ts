@@ -58,6 +58,7 @@ export interface CDragonItem {
   to: number[];
   categories: string[];
   stats: Record<string, number>;
+  iconPath?: string;
 }
 
 type CDragonVersionName = "latest" | "pbe";
@@ -326,6 +327,7 @@ export class CommunityDragonService {
           ? item.categories.map((category) => String(category))
           : [],
         stats: (item.stats as Record<string, number>) ?? {},
+        iconPath: typeof item.iconPath === "string" ? item.iconPath : undefined,
       }))
       .filter((item) => item.id > 0);
 
