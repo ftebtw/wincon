@@ -324,7 +324,23 @@ async function getCachedAnalysis(matchId: string, playerPuuid: string): Promise<
       return null;
     }
 
-    return cached[0].analysisJson as MatchAnalysisOutput;
+    const analysis = cached[0].analysisJson as MatchAnalysisOutput;
+    const summary = String(analysis.summary ?? "").toLowerCase();
+    const hasFallbackSummary =
+      summary.includes("temporarily unavailable") ||
+      summary.includes("not configured") ||
+      summary.includes("at capacity");
+    const hasFallbackTips =
+      Array.isArray(analysis.laning_phase?.tips) &&
+      analysis.laning_phase.tips.some((tip) =>
+        String(tip).toLowerCase().includes("try again shortly"),
+      );
+
+    if (hasFallbackSummary || hasFallbackTips) {
+      return null;
+    }
+
+    return analysis;
   } catch (error) {
     console.error("[AnalysisRoute] Failed to read cached analysis:", error);
     return null;

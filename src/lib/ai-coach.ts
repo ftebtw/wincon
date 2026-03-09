@@ -400,6 +400,21 @@ function normalizeLiveScout(value: unknown): LiveGameScoutOutput | null {
   };
 }
 
+function isFallbackMatchAnalysis(analysis: MatchAnalysisOutput): boolean {
+  const summary = analysis.summary.toLowerCase();
+  if (
+    summary.includes("temporarily unavailable") ||
+    summary.includes("not configured") ||
+    summary.includes("at capacity")
+  ) {
+    return true;
+  }
+
+  return analysis.laning_phase.tips.some((tip) =>
+    tip.toLowerCase().includes("try again shortly"),
+  );
+}
+
 function stableStringify(value: unknown): string {
   if (value === null || value === undefined) {
     return String(value);
@@ -676,7 +691,12 @@ export class AICoach {
         return null;
       }
 
-      return normalizeMatchAnalysis(cached[0].analysisJson);
+      const normalized = normalizeMatchAnalysis(cached[0].analysisJson);
+      if (!normalized || isFallbackMatchAnalysis(normalized)) {
+        return null;
+      }
+
+      return normalized;
     } catch (error) {
       console.error("[AICoach] Failed to read cached match analysis:", error);
       return null;
