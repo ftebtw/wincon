@@ -688,6 +688,7 @@ export class AICoach {
     playerPuuid: string;
     analysis: MatchAnalysisOutput;
     usage: AIUsageSummary;
+    modelVersion: string;
   }): Promise<void> {
     if (!process.env.DATABASE_URL) {
       return;
@@ -702,7 +703,7 @@ export class AICoach {
           analysisType: "match_review",
           analysisJson: params.analysis,
           coachingText: params.analysis.summary,
-          modelVersion: MODEL_VERSION,
+          modelVersion: params.modelVersion,
           inputTokens: params.usage.inputTokens,
           outputTokens: params.usage.outputTokens,
           estimatedCost: params.usage.estimatedCostUsd.toFixed(6),
@@ -717,7 +718,7 @@ export class AICoach {
           set: {
             analysisJson: params.analysis,
             coachingText: params.analysis.summary,
-            modelVersion: MODEL_VERSION,
+            modelVersion: params.modelVersion,
             inputTokens: params.usage.inputTokens,
             outputTokens: params.usage.outputTokens,
             estimatedCost: params.usage.estimatedCostUsd.toFixed(6),
@@ -886,12 +887,33 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
 `.trim();
 
     try {
-      const analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
-        prompt: buildPrompt(formattedMatch),
-        shorterPrompt: buildPrompt(truncatedMatch),
-        normalize: normalizeMatchAnalysis,
-        maxTokens: 4096,
-      });
+      let analysis: ParsedResponseWithUsage<MatchAnalysisOutput>;
+      try {
+        analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
+          prompt: buildPrompt(formattedMatch),
+          shorterPrompt: buildPrompt(truncatedMatch),
+          normalize: normalizeMatchAnalysis,
+          maxTokens: 4096,
+          model: OPUS_MODEL_VERSION,
+        });
+      } catch (error) {
+        if (error instanceof AICircuitBreakerError) {
+          throw error;
+        }
+
+        logger.warn("Opus match analysis failed, retrying with Sonnet.", {
+          endpoint: "AICoach.analyzeMatch",
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
+          prompt: buildPrompt(formattedMatch),
+          shorterPrompt: buildPrompt(truncatedMatch),
+          normalize: normalizeMatchAnalysis,
+          maxTokens: 4096,
+          model: SONNET_MODEL_VERSION,
+        });
+      }
 
       if (matchId && playerPuuid) {
         await this.saveCachedMatchAnalysis({
@@ -899,6 +921,7 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
           playerPuuid,
           analysis: analysis.parsed,
           usage: analysis.usage,
+          modelVersion: analysis.usage.model,
         });
       }
 
