@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./load-env";
 
 import { Backtester } from "../src/lib/betting/backtester";
 import { db, schema } from "../src/lib/db";
@@ -72,4 +72,3 @@ main().catch((error) => {
   console.error("Backtest failed:", error);
   process.exit(1);
 });
-
