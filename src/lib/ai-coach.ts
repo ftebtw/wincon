@@ -193,6 +193,74 @@ function buildHeuristicMatchAnalysis(
   };
 }
 
+function isUnavailable(value: string | undefined): boolean {
+  if (!value) {
+    return true;
+  }
+  return /unavailable/i.test(value);
+}
+
+function hydrateAnalysisFromStats(
+  analysis: MatchAnalysisOutput,
+  data: CompactedMatchData,
+): MatchAnalysisOutput {
+  const laneTips = analysis.laning_phase.tips.filter((tip) => tip.trim().length > 0);
+  const macroTips = analysis.macro_assessment.tips.filter((tip) => tip.trim().length > 0);
+  const improvements = analysis.top_3_improvements.filter((tip) => tip.trim().length > 0);
+
+  return {
+    ...analysis,
+    build_analysis: {
+      ...analysis.build_analysis,
+      explanation: isUnavailable(analysis.build_analysis.explanation)
+        ? data.contextualBuildSummary[0] ?? "Build compared against matchup and comp context."
+        : analysis.build_analysis.explanation,
+      suggested_changes:
+        analysis.build_analysis.suggested_changes.length > 0
+          ? analysis.build_analysis.suggested_changes
+          : data.contextualBuildSummary.slice(1, 4),
+    },
+    laning_phase: {
+      ...analysis.laning_phase,
+      cs_assessment: isUnavailable(analysis.laning_phase.cs_assessment)
+        ? `CS/min ${data.playerInfo.csPerMin}. Target 7.5+ in stable lanes.`
+        : analysis.laning_phase.cs_assessment,
+      trade_patterns: isUnavailable(analysis.laning_phase.trade_patterns)
+        ? data.abilityContext[0] ?? "Trade on cooldown windows and avoid forced all-ins without vision."
+        : analysis.laning_phase.trade_patterns,
+      tips:
+        laneTips.length > 0
+          ? laneTips
+          : data.rankBenchmarks.slice(0, 2),
+    },
+    macro_assessment: {
+      ...analysis.macro_assessment,
+      objective_participation: isUnavailable(analysis.macro_assessment.objective_participation)
+        ? data.objectives
+        : analysis.macro_assessment.objective_participation,
+      map_presence: isUnavailable(analysis.macro_assessment.map_presence)
+        ? data.gameState.minuteByMinute
+        : analysis.macro_assessment.map_presence,
+      tips:
+        macroTips.length > 0
+          ? macroTips
+          : [data.objectives, ...data.recallTiming.slice(0, 1)].filter(Boolean),
+    },
+    top_3_improvements:
+      improvements.length > 0
+        ? improvements.slice(0, 3)
+        : [
+            ...data.goldEfficiencyIssues.slice(0, 1),
+            ...data.recallTiming.slice(0, 1),
+            ...data.keyMoments
+              .filter((moment) => moment.winProbChange.includes("-"))
+              .map((moment) => `Review ${moment.timestamp}: ${moment.description}`),
+          ]
+            .filter(Boolean)
+            .slice(0, 3),
+  };
+}
+
 function fallbackPatternAnalysis(reason = "Pattern analysis is temporarily unavailable."): PatternAnalysisOutput {
   return {
     patterns: [],
@@ -1060,17 +1128,19 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
         model: MATCH_ANALYSIS_PRIMARY_MODEL,
       });
 
+      const hydratedAnalysis = hydrateAnalysisFromStats(analysis.parsed, compactedData);
+
       if (matchId && playerPuuid) {
         await this.saveCachedMatchAnalysis({
           matchId,
           playerPuuid,
-          analysis: analysis.parsed,
+          analysis: hydratedAnalysis,
           usage: analysis.usage,
           modelVersion: analysis.usage.model,
         });
       }
 
-      return analysis.parsed;
+      return hydratedAnalysis;
     } catch (error) {
       if (error instanceof AICircuitBreakerError) {
         return buildHeuristicMatchAnalysis(compactedData, error.message);
