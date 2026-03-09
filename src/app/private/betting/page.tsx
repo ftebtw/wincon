@@ -104,8 +104,31 @@ export default async function PrivateBettingPage() {
       ? esportsAPIClient.getLive().catch(() => ({ events: [], games: [] }))
       : Promise.resolve({ events: [], games: [] }),
   ]);
+  const scheduleFeed = isEsportsLiveEnabled()
+    ? await esportsAPIClient.getSchedule().catch(() => ({ events: [] }))
+    : { events: [] };
 
-  const primaryUpcoming = upcomingOdds[0] ?? null;
+  const scheduleUpcoming = scheduleFeed.events
+    .filter((event) => event.type === "match" && event.state === "unstarted")
+    .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
+    .find((event) => {
+      const left = event.match?.teams?.[0]?.name;
+      const right = event.match?.teams?.[1]?.name;
+      return Boolean(left && right);
+    });
+
+  const primaryUpcoming = upcomingOdds[0]
+    ? { fixture: upcomingOdds[0].fixture }
+    : scheduleUpcoming
+      ? {
+          fixture: {
+            id: scheduleUpcoming.id || `schedule:${scheduleUpcoming.startTime}`,
+            league: scheduleUpcoming.league.name || scheduleUpcoming.league.slug.toUpperCase(),
+            homeTeam: scheduleUpcoming.match?.teams?.[0]?.name ?? "Team 1",
+            awayTeam: scheduleUpcoming.match?.teams?.[1]?.name ?? "Team 2",
+          },
+        }
+      : null;
   const soloSpyPanel = primaryUpcoming
     ? await (async () => {
         const team1 = primaryUpcoming.fixture.homeTeam;
@@ -139,6 +162,11 @@ export default async function PrivateBettingPage() {
         };
       })().catch(() => null)
     : null;
+
+  const draftCandidates = scheduleFeed.events
+    .filter((event) => event.type === "match" && (event.state === "inProgress" || event.state === "unstarted"))
+    .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
+    .slice(0, 5);
 
   const livePanel = liveFeed.games[0]
     ? await (async () => {
@@ -270,6 +298,10 @@ export default async function PrivateBettingPage() {
                       {signal.player}: {signal.champion} x{signal.gamesLast3Days} ({(signal.confidenceScore * 100).toFixed(0)}% conf)
                     </p>
                   ))}
+                  {soloSpyPanel.spySignals &&
+                  (soloSpyPanel.spySignals.team1.length + soloSpyPanel.spySignals.team2.length === 0) ? (
+                    <p>No tracked solo-queue accounts found for this matchup yet.</p>
+                  ) : null}
                   {soloSpyPanel.spySignals === null ? <p>No solo queue spy data available.</p> : null}
                 </div>
               </>
@@ -318,17 +350,26 @@ export default async function PrivateBettingPage() {
             <CardTitle>Live Draft Tracker</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>
-              Draft progression updates are available through the model&apos;s
-              `updateWithDraftAction()` flow.
-            </p>
-            <p>
-              During draft, feed each pick/ban action and record probability
-              deltas to trigger manual or automated bet entries.
-            </p>
-            <p>
-              Current status: waiting for live draft event feed integration.
-            </p>
+            {draftCandidates.length > 0 ? (
+              <>
+                <p className="text-foreground font-medium">Next tracked series</p>
+                {draftCandidates.map((event) => (
+                  <div key={event.id} className="rounded border border-border/60 p-2">
+                    <p>
+                      {event.match?.teams?.[0]?.name ?? "Team 1"} vs {event.match?.teams?.[1]?.name ?? "Team 2"}
+                    </p>
+                    <p className="text-xs">
+                      {event.league.name || event.league.slug.toUpperCase()} · {new Date(event.startTime).toLocaleString()}
+                    </p>
+                  </div>
+                ))}
+                <p className="text-xs">
+                  Pick/ban event stream is not exposed by the public lolesports endpoints, so full per-action draft deltas are not available yet.
+                </p>
+              </>
+            ) : (
+              <p>No upcoming matches available to track draft state right now.</p>
+            )}
           </CardContent>
         </Card>
 

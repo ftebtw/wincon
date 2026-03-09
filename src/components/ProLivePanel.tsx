@@ -27,6 +27,7 @@ type ProScheduleResponse = {
   stale?: boolean;
   error?: boolean;
   message?: string;
+  fallbackToGlobal?: boolean;
   lastUpdated?: string | null;
   results: EsportsEvent[];
   upcoming: EsportsEvent[];
@@ -175,6 +176,14 @@ export function ProLivePanel({ leagueSlug }: ProLivePanelProps) {
             <span>
               Last updated {relativeLastUpdated(liveData?.lastUpdated ?? scheduleData?.lastUpdated)}
             </span>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {scheduleData?.fallbackToGlobal && scheduleData.message ? (
+        <Card className="border-border/60 bg-background/40">
+          <CardContent className="py-3 text-xs text-muted-foreground">
+            {scheduleData.message}
           </CardContent>
         </Card>
       ) : null}

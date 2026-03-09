@@ -44,6 +44,9 @@ function calculateGoldPct(game?: EsportsLiveGame): number {
 }
 
 function watchUrl(eventId: string): string {
+  if (!eventId || eventId.includes(":")) {
+    return "https://lolesports.com/en-US/schedule";
+  }
   return `https://lolesports.com/en-US/schedule?eventId=${encodeURIComponent(eventId)}`;
 }
 

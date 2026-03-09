@@ -16,7 +16,8 @@ function normalizeLeagueSlug(value: string | null): string | null {
 }
 
 function splitSchedule(events: EsportsSchedule["events"]) {
-  const sorted = [...events].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+  const matchEvents = events.filter((event) => event.type === "match");
+  const sorted = [...matchEvents].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
 
   return {
     results: sorted.filter((event) => event.state === "completed").slice(-10).reverse(),
@@ -25,12 +26,12 @@ function splitSchedule(events: EsportsSchedule["events"]) {
   };
 }
 
-function findLeagueIdBySlug(leagues: EsportsLeague[], leagueSlug: string | null): string | undefined {
+function filterByLeagueSlug(events: EsportsSchedule["events"], leagueSlug: string | null) {
   if (!leagueSlug) {
-    return undefined;
+    return events;
   }
 
-  return leagues.find((league) => league.slug.toLowerCase() === leagueSlug)?.id;
+  return events.filter((event) => event.league.slug.toLowerCase() === leagueSlug);
 }
 
 export async function GET(request: Request) {
@@ -50,17 +51,26 @@ export async function GET(request: Request) {
 
   try {
     const leagues = await esportsAPIClient.getLeagues();
-    const leagueId = findLeagueIdBySlug(leagues, requestedLeagueSlug);
-    const schedule = await esportsAPIClient.getSchedule(leagueId);
-    const { results, upcoming, live } = splitSchedule(schedule.events);
+    const schedule = await esportsAPIClient.getSchedule();
+    const filteredEvents = filterByLeagueSlug(schedule.events, requestedLeagueSlug);
+    const localSplit = splitSchedule(filteredEvents);
+    const globalSplit = splitSchedule(schedule.events);
+    const usedGlobalFallback =
+      Boolean(requestedLeagueSlug) &&
+      localSplit.upcoming.length === 0 &&
+      localSplit.live.length === 0;
 
     return Response.json({
       leagues,
-      results,
-      upcoming,
-      live,
+      results: localSplit.results,
+      upcoming: usedGlobalFallback ? globalSplit.upcoming : localSplit.upcoming,
+      live: usedGlobalFallback ? globalSplit.live : localSplit.live,
       lastUpdated: new Date().toISOString(),
       stale: false,
+      fallbackToGlobal: usedGlobalFallback,
+      message: usedGlobalFallback
+        ? "Selected league has no upcoming/live matches right now. Showing global upcoming matches."
+        : undefined,
     });
   } catch (error) {
     console.error("[ProScheduleAPI] Failed to fetch schedule:", error);
@@ -69,28 +79,30 @@ export async function GET(request: Request) {
       ESPORTS_CACHE_KEYS.leagues,
     )?.value ?? [];
 
-    const fallbackLeagueId = findLeagueIdBySlug(fallbackLeagues, requestedLeagueSlug);
-    const scheduleCacheKey = fallbackLeagueId
-      ? `${ESPORTS_CACHE_KEYS.scheduleByLeague}${fallbackLeagueId}`
-      : ESPORTS_CACHE_KEYS.scheduleAll;
-
-    const fallbackSchedule = esportsAPIClient.getLastSuccessful<EsportsSchedule>(scheduleCacheKey)
-      ?? esportsAPIClient.getLastSuccessful<EsportsSchedule>(ESPORTS_CACHE_KEYS.scheduleAll);
+    const fallbackSchedule = esportsAPIClient.getLastSuccessful<EsportsSchedule>(
+      ESPORTS_CACHE_KEYS.scheduleAll,
+    );
 
     const events = fallbackSchedule?.value.events ?? [];
-    const { results, upcoming, live } = splitSchedule(events);
+    const localSplit = splitSchedule(filterByLeagueSlug(events, requestedLeagueSlug));
+    const globalSplit = splitSchedule(events);
+    const usedGlobalFallback =
+      Boolean(requestedLeagueSlug) &&
+      localSplit.upcoming.length === 0 &&
+      localSplit.live.length === 0;
 
     return Response.json({
       leagues: fallbackLeagues,
-      results,
-      upcoming,
-      live,
+      results: localSplit.results,
+      upcoming: usedGlobalFallback ? globalSplit.upcoming : localSplit.upcoming,
+      live: usedGlobalFallback ? globalSplit.live : localSplit.live,
       stale: true,
       error: true,
       message: "Esports schedule temporarily unavailable. Showing cached data.",
       lastUpdated: fallbackSchedule
         ? new Date(fallbackSchedule.updatedAt).toISOString()
         : null,
+      fallbackToGlobal: usedGlobalFallback,
     });
   }
 }

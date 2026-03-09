@@ -175,10 +175,23 @@ function parseEvent(raw: unknown): EsportsEvent {
   const matchRaw = entry.match as Record<string, unknown> | undefined;
   const teamsRaw = Array.isArray(matchRaw?.teams) ? matchRaw.teams : [];
   const gamesRaw = Array.isArray(matchRaw?.games) ? matchRaw.games : [];
+  const startTime = toString(entry.startTime);
+  const leagueSlug = toString((entry.league as Record<string, unknown> | undefined)?.slug);
+  const fallbackIdParts = teamsRaw
+    .map((team) => {
+      const teamRecord = (team ?? {}) as Record<string, unknown>;
+      return toString(teamRecord.code || teamRecord.name).toLowerCase();
+    })
+    .filter((value) => value.length > 0)
+    .join("-");
+  const eventId =
+    toString(entry.id) ||
+    toString(matchRaw?.id) ||
+    `${leagueSlug || "unknown"}:${startTime || "unknown"}:${fallbackIdParts || "match"}`;
 
   return {
-    id: toString(entry.id),
-    startTime: toString(entry.startTime),
+    id: eventId,
+    startTime,
     state: normalizeEventState(entry.state),
     type: normalizeEventType(entry.type),
     blockName: toString(entry.blockName),
@@ -495,7 +508,41 @@ export class EsportsAPIClient {
     const events = Array.isArray(payload.data?.schedule?.events)
       ? payload.data?.schedule?.events.map(parseEvent)
       : [];
-    const liveEvents = events.filter((event) => event.state === "inProgress");
+    const baseLiveEvents = events.filter(
+      (event) => event.state === "inProgress" && event.type === "match",
+    );
+
+    const liveEvents = await Promise.all(
+      baseLiveEvents.map(async (event) => {
+        const hasTeams = (event.match?.teams?.length ?? 0) > 0;
+        const hasGames = (event.match?.games?.length ?? 0) > 0;
+        const isSyntheticId = event.id.includes(":");
+        if ((hasTeams && hasGames) || isSyntheticId) {
+          return event;
+        }
+
+        try {
+          const detail = await this.getEventDetails(event.id);
+          const detailHasTeams = (detail.match?.teams?.length ?? 0) > 0;
+          const detailHasGames = (detail.match?.games?.length ?? 0) > 0;
+          if (detailHasTeams || detailHasGames) {
+            return {
+              ...event,
+              match: detail.match ?? event.match,
+              blockName: detail.blockName || event.blockName,
+              league: {
+                name: detail.league.name || event.league.name,
+                slug: detail.league.slug || event.league.slug,
+              },
+            } satisfies EsportsEvent;
+          }
+        } catch (error) {
+          console.error(`[EsportsAPI] Event details fetch failed for ${event.id}:`, error);
+        }
+
+        return event;
+      }),
+    );
 
     const liveGames = await Promise.all(
       liveEvents.map(async (event) => {

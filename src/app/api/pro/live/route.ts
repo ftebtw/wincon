@@ -7,7 +7,7 @@
 
 function getUpcoming(schedule: EsportsSchedule, limit: number) {
   return schedule.events
-    .filter((event) => event.state === "unstarted")
+    .filter((event) => event.state === "unstarted" && event.type === "match")
     .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
     .slice(0, limit);
 }
