@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
+import { JetBrains_Mono, Manrope } from "next/font/google";
 import { eq } from "drizzle-orm";
 
 import { Footer } from "@/components/Footer";
@@ -11,6 +12,18 @@ import { db, schema } from "@/lib/db";
 import { parseRegion, REGION_COOKIE_NAME, type Region } from "@/lib/regions";
 
 import "./globals.css";
+
+const sansFont = Manrope({
+  subsets: ["latin"],
+  variable: "--font-manrope",
+  display: "swap",
+});
+
+const monoFont = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: {
@@ -54,7 +67,7 @@ export default async function RootLayout({
   }
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className={`dark ${sansFont.variable} ${monoFont.variable}`}>
       <body className="min-h-screen bg-background text-foreground antialiased">
         <TooltipProvider>
           <div className="flex min-h-screen flex-col">
