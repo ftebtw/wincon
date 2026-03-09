@@ -40,6 +40,15 @@ function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+async function safeQuery<T>(label: string, query: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await query;
+  } catch (error) {
+    console.error(`[PrivateBettingPage] ${label} query failed:`, error);
+    return fallback;
+  }
+}
+
 export default async function PrivateBettingPage() {
   const config = getAutoBettorConfigFromEnv();
   const polymarket = new PolymarketClient();
@@ -50,21 +59,33 @@ export default async function PrivateBettingPage() {
   );
 
   const [predictionRows, logRows, backtestRows] = await Promise.all([
-    db
-      .select()
-      .from(schema.bettingPredictions)
-      .orderBy(desc(schema.bettingPredictions.createdAt))
-      .limit(20),
-    db
-      .select()
-      .from(schema.bettingLog)
-      .orderBy(desc(schema.bettingLog.createdAt))
-      .limit(25),
-    db
-      .select()
-      .from(schema.backtestResults)
-      .orderBy(desc(schema.backtestResults.runAt))
-      .limit(5),
+    safeQuery(
+      "betting_predictions",
+      db
+        .select()
+        .from(schema.bettingPredictions)
+        .orderBy(desc(schema.bettingPredictions.createdAt))
+        .limit(20),
+      [],
+    ),
+    safeQuery(
+      "betting_log",
+      db
+        .select()
+        .from(schema.bettingLog)
+        .orderBy(desc(schema.bettingLog.createdAt))
+        .limit(25),
+      [],
+    ),
+    safeQuery(
+      "backtest_results",
+      db
+        .select()
+        .from(schema.backtestResults)
+        .orderBy(desc(schema.backtestResults.runAt))
+        .limit(5),
+      [],
+    ),
   ]);
 
   const [portfolio] = await Promise.all([
