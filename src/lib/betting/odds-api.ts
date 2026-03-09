@@ -245,20 +245,28 @@ export class OddsPapiClient {
   }
 
   private async resolveTheOddsSportKey(): Promise<string> {
-    if (this.theOddsSportKey) {
-      return this.theOddsSportKey;
-    }
-
     const payload = await this.fetchFromTheOddsApi("/sports");
     const rows = Array.isArray(payload) ? payload : [];
+    const availableKeys = new Set(
+      rows.map((row) => String((row as Record<string, unknown>).key ?? "")),
+    );
+
+    if (this.theOddsSportKey && availableKeys.has(this.theOddsSportKey)) {
+      return this.theOddsSportKey;
+    }
+    if (this.theOddsSportKey && !availableKeys.has(this.theOddsSportKey)) {
+      // Ignore stale/invalid env override (commonly causes UNKNOWN_SPORT).
+      this.theOddsSportKey = null;
+    }
 
     const match = rows.find((row) => {
       const entry = row as Record<string, unknown>;
       const key = String(entry.key ?? "").toLowerCase();
       const title = String(entry.title ?? "").toLowerCase();
       return (
-        key.includes("league") ||
-        key.includes("lol") ||
+        key === "esports_lol" ||
+        (key.startsWith("esports_") &&
+          (key.includes("lol") || title.includes("league of legends"))) ||
         title.includes("league of legends") ||
         title.includes("league-of-legends")
       );
@@ -270,6 +278,12 @@ export class OddsPapiClient {
 
     this.theOddsSportKey = String(match.key ?? LOL_SPORT_ID);
     return this.theOddsSportKey;
+  }
+
+  private isUnknownSportError(error: unknown): boolean {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "");
+    return message.includes("UNKNOWN_SPORT") || message.includes("Unknown sport");
   }
 
   private parseTheOddsEvent(event: Record<string, unknown>): FixtureOdds | null {
@@ -470,18 +484,35 @@ export class OddsPapiClient {
 
   async getUpcomingFixtures(): Promise<FixtureOdds[]> {
     if (this.provider === "theoddsapi") {
-      const sportKey = await this.resolveTheOddsSportKey();
-      const payload = await this.fetchFromTheOddsApi(`/sports/${encodeURIComponent(sportKey)}/odds`, {
-        regions: this.theOddsRegions,
-        markets: "h2h",
-        oddsFormat: "decimal",
-        dateFormat: "iso",
-      });
+      try {
+        const sportKey = await this.resolveTheOddsSportKey();
+        const payload = await this.fetchFromTheOddsApi(
+          `/sports/${encodeURIComponent(sportKey)}/odds`,
+          {
+            regions: this.theOddsRegions,
+            markets: "h2h",
+            oddsFormat: "decimal",
+            dateFormat: "iso",
+          },
+        );
 
-      return this.parseTheOddsPayload(payload)
-        .filter((row) => row.fixture.status === "pre" || row.fixture.status === "live")
-        .sort((a, b) => new Date(a.fixture.startTime).getTime() - new Date(b.fixture.startTime).getTime())
-        .slice(0, 30);
+        return this.parseTheOddsPayload(payload)
+          .filter(
+            (row) => row.fixture.status === "pre" || row.fixture.status === "live",
+          )
+          .sort(
+            (a, b) =>
+              new Date(a.fixture.startTime).getTime() -
+              new Date(b.fixture.startTime).getTime(),
+          )
+          .slice(0, 30);
+      } catch (error) {
+        if (this.isUnknownSportError(error)) {
+          this.theOddsSportKey = null;
+          return [];
+        }
+        throw error;
+      }
     }
 
     // Legacy fallback for old OddsPapi integration.
@@ -497,23 +528,32 @@ export class OddsPapiClient {
 
   async getFixtureOdds(fixtureId: string): Promise<FixtureOdds> {
     if (this.provider === "theoddsapi") {
-      const sportKey = await this.resolveTheOddsSportKey();
-      const payload = await this.fetchFromTheOddsApi(
-        `/sports/${encodeURIComponent(sportKey)}/events/${encodeURIComponent(fixtureId)}/odds`,
-        {
-          regions: this.theOddsRegions,
-          markets: "h2h",
-          oddsFormat: "decimal",
-          dateFormat: "iso",
-        },
-      );
+      try {
+        const sportKey = await this.resolveTheOddsSportKey();
+        const payload = await this.fetchFromTheOddsApi(
+          `/sports/${encodeURIComponent(sportKey)}/events/${encodeURIComponent(
+            fixtureId,
+          )}/odds`,
+          {
+            regions: this.theOddsRegions,
+            markets: "h2h",
+            oddsFormat: "decimal",
+            dateFormat: "iso",
+          },
+        );
 
-      const parsed = this.parseTheOddsPayload(payload);
-      const first = parsed[0];
-      if (!first) {
-        throw new Error(`No odds returned for fixture ${fixtureId}.`);
+        const parsed = this.parseTheOddsPayload(payload);
+        const first = parsed[0];
+        if (!first) {
+          throw new Error(`No odds returned for fixture ${fixtureId}.`);
+        }
+        return first;
+      } catch (error) {
+        if (this.isUnknownSportError(error)) {
+          this.theOddsSportKey = null;
+        }
+        throw error;
       }
-      return first;
     }
 
     const payload = await this.fetchFromOddsPapi(`/fixtures/${fixtureId}/odds`, {
