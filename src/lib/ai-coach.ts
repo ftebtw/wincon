@@ -113,31 +113,83 @@ function coerceBuildRating(
   return "suboptimal";
 }
 
-function fallbackMatchAnalysis(reason = "Analysis is temporarily unavailable."): MatchAnalysisOutput {
+function parseKda(kda: string): { kills: number; deaths: number; assists: number } {
+  const [killsRaw, deathsRaw, assistsRaw] = kda.split("/");
   return {
-    overall_grade: "N/A",
-    summary: reason,
-    key_moments: [],
+    kills: Number(killsRaw ?? 0) || 0,
+    deaths: Number(deathsRaw ?? 0) || 0,
+    assists: Number(assistsRaw ?? 0) || 0,
+  };
+}
+
+function heuristicGrade(data: CompactedMatchData): MatchAnalysisOutput["overall_grade"] {
+  const kda = parseKda(data.playerInfo.kda);
+  let score = 0;
+  if (data.playerInfo.result === "WIN") score += 2;
+  if (data.playerInfo.csPerMin >= 8) score += 2;
+  else if (data.playerInfo.csPerMin >= 7) score += 1;
+  if (kda.deaths <= 3) score += 2;
+  else if (kda.deaths <= 6) score += 1;
+  if (kda.kills + kda.assists >= 12) score += 1;
+
+  if (score >= 6) return "A";
+  if (score >= 4) return "B";
+  if (score >= 2) return "C";
+  if (score >= 1) return "D";
+  return "F";
+}
+
+function buildHeuristicMatchAnalysis(
+  data: CompactedMatchData,
+  reason: string,
+): MatchAnalysisOutput {
+  const topMoments = data.keyMoments.slice(0, 3);
+  const keyMoments: MatchAnalysisOutput["key_moments"] = topMoments.map((moment) => ({
+    timestamp: moment.timestamp,
+    type: moment.winProbChange.includes("-") ? "mistake" : "good_play",
+    title: moment.description.slice(0, 80) || "Key moment",
+    explanation: moment.context || moment.description || "Timeline swing detected.",
+    what_to_do_instead: moment.winProbChange.includes("-")
+      ? "Slow down the play and check numbers/objective setup before committing."
+      : undefined,
+    win_prob_impact: Number(moment.winProbChange.match(/-?\d+/)?.[0] ?? 0),
+  }));
+
+  const laneTipSource = data.rankBenchmarks.slice(0, 2);
+  const macroTipSource = [
+    data.objectives,
+    ...data.teamfights.slice(0, 1),
+    ...data.recallTiming.slice(0, 1),
+  ].filter(Boolean);
+
+  const improvementCandidates = [
+    ...data.goldEfficiencyIssues.slice(0, 1),
+    ...data.recallTiming.slice(0, 1),
+    ...topMoments
+      .filter((moment) => moment.winProbChange.includes("-"))
+      .map((moment) => `Review ${moment.timestamp}: ${moment.description}`),
+  ].filter(Boolean);
+
+  return {
+    overall_grade: heuristicGrade(data),
+    summary: `Stat-driven analysis generated because model output failed schema checks (${reason}).`,
+    key_moments: keyMoments,
     build_analysis: {
       rating: "suboptimal",
-      explanation: "Build analysis unavailable right now.",
-      suggested_changes: [],
+      explanation: data.contextualBuildSummary[0] ?? "Reviewed from build timeline and comp context.",
+      suggested_changes: data.contextualBuildSummary.slice(1, 4),
     },
     laning_phase: {
-      cs_assessment: "Unavailable",
-      trade_patterns: "Unavailable",
-      tips: ["Try again shortly for full AI laning feedback."],
+      cs_assessment: `CS/min ${data.playerInfo.csPerMin}. Target 7.5+ consistently.`,
+      trade_patterns: data.abilityContext[0] ?? "Track cooldown windows before forcing trades.",
+      tips: laneTipSource.length > 0 ? laneTipSource : ["Play tighter around first 10 minutes."],
     },
     macro_assessment: {
-      objective_participation: "Unavailable",
-      map_presence: "Unavailable",
-      tips: ["Try again shortly for full AI macro feedback."],
+      objective_participation: data.objectives,
+      map_presence: data.gameState.minuteByMinute,
+      tips: macroTipSource.length > 0 ? macroTipSource : ["Plan objective setup one wave earlier."],
     },
-    top_3_improvements: [
-      "Review key deaths around objectives.",
-      "Track item spikes before committing to fights.",
-      "Retry analysis when the AI service is available.",
-    ],
+    top_3_improvements: improvementCandidates.slice(0, 3),
   };
 }
 
@@ -894,8 +946,9 @@ ${trimmed}
     }
 
     if (!this.client) {
-      return fallbackMatchAnalysis(
-        "AI analysis is temporarily unavailable because ANTHROPIC_API_KEY is not configured.",
+      return buildHeuristicMatchAnalysis(
+        compactedData,
+        "ANTHROPIC_API_KEY is not configured",
       );
     }
 
@@ -1020,7 +1073,7 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
       return analysis.parsed;
     } catch (error) {
       if (error instanceof AICircuitBreakerError) {
-        return fallbackMatchAnalysis(error.message);
+        return buildHeuristicMatchAnalysis(compactedData, error.message);
       }
       const reason =
         error instanceof Error
@@ -1030,8 +1083,9 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
         endpoint: "AICoach.analyzeMatch",
         error: reason,
       });
-      return fallbackMatchAnalysis(
-        `AI analysis is temporarily unavailable (${reason}). Please retry in a minute.`,
+      return buildHeuristicMatchAnalysis(
+        compactedData,
+        `AI analysis failed: ${reason}`,
       );
     }
   }
