@@ -954,12 +954,16 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
       if (error instanceof AICircuitBreakerError) {
         return fallbackMatchAnalysis(error.message);
       }
+      const reason =
+        error instanceof Error
+          ? error.message.slice(0, 160)
+          : String(error).slice(0, 160);
       logger.error("analyzeMatch failed.", {
         endpoint: "AICoach.analyzeMatch",
-        error: error instanceof Error ? error.message : String(error),
+        error: reason,
       });
       return fallbackMatchAnalysis(
-        "AI analysis is temporarily unavailable. Please retry in a minute.",
+        `AI analysis is temporarily unavailable (${reason}). Please retry in a minute.`,
       );
     }
   }
