@@ -582,7 +582,27 @@ export class AICoach {
         };
       }
     } catch {
-      // Retry below with shorter prompt.
+      // Retry/repair below.
+    }
+
+    const repairedFirst = await this.repairMalformedJson(
+      firstRaw,
+      params.maxTokens,
+    );
+    if (repairedFirst) {
+      const parsed = params.normalize(repairedFirst.value);
+      if (parsed) {
+        return {
+          parsed,
+          usage: {
+            inputTokens: firstCall.usage.inputTokens + repairedFirst.usage.inputTokens,
+            outputTokens: firstCall.usage.outputTokens + repairedFirst.usage.outputTokens,
+            estimatedCostUsd:
+              firstCall.usage.estimatedCostUsd + repairedFirst.usage.estimatedCostUsd,
+            model: params.model ?? MODEL_VERSION,
+          },
+        };
+      }
     }
 
     const secondCall = await this.callAnthropic(
@@ -591,7 +611,18 @@ export class AICoach {
       params.model ?? MODEL_VERSION,
     );
     const secondRaw = secondCall.text;
-    const parsedSecond = params.normalize(parseJson(secondRaw));
+    let parsedSecond: T | null = null;
+    try {
+      parsedSecond = params.normalize(parseJson(secondRaw));
+    } catch {
+      const repairedSecond = await this.repairMalformedJson(
+        secondRaw,
+        params.maxTokens,
+      );
+      if (repairedSecond) {
+        parsedSecond = params.normalize(repairedSecond.value);
+      }
+    }
 
     if (!parsedSecond) {
       throw new Error("AI response was not valid JSON in the expected schema.");
@@ -607,6 +638,37 @@ export class AICoach {
         model: params.model ?? MODEL_VERSION,
       },
     };
+  }
+
+  private async repairMalformedJson(
+    raw: string,
+    maxTokens: number,
+  ): Promise<{ value: unknown; usage: AIUsageSummary } | null> {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const repairPrompt = `
+You repair malformed JSON.
+Return ONLY valid JSON.
+Do not add commentary.
+
+MALFORMED_JSON:
+${trimmed}
+`.trim();
+
+    try {
+      const repairCall = await this.callAnthropic(
+        repairPrompt,
+        Math.min(maxTokens, 1500),
+        SONNET_MODEL_VERSION,
+      );
+      const parsed = parseJson(repairCall.text);
+      return { value: parsed, usage: repairCall.usage };
+    } catch {
+      return null;
+    }
   }
 
   private getModelFamily(model: string): ModelFamily {
