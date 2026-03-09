@@ -813,10 +813,14 @@ export class AICoach {
       );
     }
 
-    const formattedMatch = formatForPrompt(compactedData);
+    const formattedMatchRaw = formatForPrompt(compactedData);
+    const formattedMatch =
+      formattedMatchRaw.length > 7000
+        ? `${formattedMatchRaw.slice(0, 7000)}\n[TRUNCATED FOR LATENCY]`
+        : formattedMatchRaw;
     const truncatedMatch =
-      formattedMatch.length > 9000
-        ? `${formattedMatch.slice(0, 9000)}\n[TRUNCATED FOR RETRY]`
+      formattedMatch.length > 4500
+        ? `${formattedMatch.slice(0, 4500)}\n[TRUNCATED FOR RETRY]`
         : formattedMatch;
 
     const resolvedChampion = playerChampion ?? compactedData.playerInfo.champion;
@@ -913,7 +917,7 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
         prompt: buildPrompt(formattedMatch),
         shorterPrompt: buildPrompt(truncatedMatch),
         normalize: normalizeMatchAnalysis,
-        maxTokens: 1800,
+        maxTokens: 1200,
         model: MATCH_ANALYSIS_PRIMARY_MODEL,
       });
 
