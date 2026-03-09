@@ -21,7 +21,7 @@ This repo includes:
 - Anthropic API (Opus/Sonnet)
 - Riot API
 - OP.GG MCP
-- OddsPapi + Polymarket integrations (private module)
+- The Odds API + Polymarket integrations (private module)
 
 ## Quick Start
 
@@ -68,7 +68,9 @@ Feature flags and integrations:
 - `ENABLE_OPGG`
 - `OPGG_MCP_URL`
 - `ENABLE_ESPORTS_LIVE`
-- `ODDSPAPI_API_KEY`
+- `THE_ODDS_API_KEY` (primary odds feed)
+- `THE_ODDS_API_SPORT_KEY` (optional override, default `esports_lol`)
+- `THE_ODDS_API_REGIONS` (optional, default `us,uk,eu,au`)
 - `BETTING_ADMIN_PASSWORD`
 - `POLYMARKET_API_KEY`
 - `POLYMARKET_API_SECRET`

@@ -204,7 +204,7 @@ export function PrivateOddsBoard({ refreshIntervalMs }: { refreshIntervalMs: num
           ) : null}
 
           {grouped.length === 0 && !isLoading ? (
-            <p className="text-sm text-muted-foreground">No upcoming LoL fixtures available from OddsPapi.</p>
+            <p className="text-sm text-muted-foreground">No upcoming LoL fixtures available from The Odds API.</p>
           ) : null}
 
           {grouped.map(([league, rows]) => (

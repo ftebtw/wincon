@@ -101,7 +101,7 @@ export async function GET(request: Request) {
       error:
         error instanceof Error
           ? error.message
-          : "Unable to fetch OddsPapi fixtures.",
+          : "Unable to fetch odds fixtures.",
     });
   }
 }
