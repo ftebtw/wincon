@@ -11,6 +11,7 @@
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
     "backtest": "tsx scripts/run-backtest.ts",
+    "backtest:random": "tsx scripts/run-backtest.ts --sampleSize=200 --randomize=true",
     "generate:champion-tags": "tsx scripts/generate-champion-tags.ts"
   },
   "dependencies": {

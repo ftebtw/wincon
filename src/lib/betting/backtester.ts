@@ -91,11 +91,13 @@ export class Backtester {
     betSizing: "flat" | "kelly";
     minEdge: number;
     maxBetFraction: number;
+    sampleSize?: number;
+    randomize?: boolean;
   }): Promise<BacktestResult> {
     const startDate = toDateRange(params.startDate);
     const endDate = toDateRange(params.endDate);
 
-    const matches = await db
+    let matches = await db
       .select({
         matchId: schema.proMatches.gameId,
         date: schema.proMatches.date,
@@ -113,6 +115,23 @@ export class Backtester {
         ),
       )
       .orderBy(asc(schema.proMatches.date));
+
+    if (params.sampleSize && params.sampleSize > 0 && matches.length > params.sampleSize) {
+      if (params.randomize) {
+        const shuffled = [...matches];
+        for (let index = shuffled.length - 1; index > 0; index -= 1) {
+          const swapIndex = Math.floor(Math.random() * (index + 1));
+          const temp = shuffled[index];
+          shuffled[index] = shuffled[swapIndex];
+          shuffled[swapIndex] = temp;
+        }
+        matches = shuffled.slice(0, params.sampleSize).sort(
+          (a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0),
+        );
+      } else {
+        matches = matches.slice(0, params.sampleSize);
+      }
+    }
 
     const predictions: PredictionSnapshot[] = [];
 

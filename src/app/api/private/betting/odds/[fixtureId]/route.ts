@@ -12,17 +12,30 @@ export async function GET(
   }
 
   const { fixtureId } = await context.params;
+  try {
+    const [fixtureOdds, bestOdds, history] = await Promise.all([
+      oddsClient.getFixtureOdds(fixtureId),
+      oddsClient.getBestOdds(fixtureId),
+      oddsClient.getHistoricalOdds(fixtureId).catch(() => []),
+    ]);
 
-  const [fixtureOdds, bestOdds, history] = await Promise.all([
-    oddsClient.getFixtureOdds(fixtureId),
-    oddsClient.getBestOdds(fixtureId),
-    oddsClient.getHistoricalOdds(fixtureId).catch(() => []),
-  ]);
-
-  return NextResponse.json({
-    fixtureOdds,
-    bestOdds,
-    history,
-    fetchedAt: new Date().toISOString(),
-  });
+    return NextResponse.json({
+      fixtureOdds,
+      bestOdds,
+      history,
+      fetchedAt: new Date().toISOString(),
+      error: null,
+    });
+  } catch (error) {
+    return NextResponse.json({
+      fixtureOdds: null,
+      bestOdds: null,
+      history: [],
+      fetchedAt: new Date().toISOString(),
+      error:
+        error instanceof Error
+          ? error.message
+          : `Unable to load odds for fixture ${fixtureId}.`,
+    });
+  }
 }

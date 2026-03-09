@@ -57,6 +57,7 @@ type OddsBoardFixture = {
 type OddsBoardResponse = {
   fixtures: OddsBoardFixture[];
   fetchedAt: string;
+  error?: string | null;
 };
 
 type FixtureDetailResponse = {
@@ -73,14 +74,14 @@ type FixtureDetailResponse = {
       margin: number;
       deepLink?: string;
     }>;
-  };
+  } | null;
   bestOdds: {
     bestHome: { bookmaker: string; homeOdds: number; deepLink?: string };
     bestAway: { bookmaker: string; awayOdds: number; deepLink?: string };
     pinnacle?: { homeOdds: number; awayOdds: number } | null;
     arbitrageExists: boolean;
     arbitragePercent?: number;
-  };
+  } | null;
   history: Array<{
     timestamp: string;
     bookmaker: string;
@@ -91,6 +92,7 @@ type FixtureDetailResponse = {
     direction: string;
     magnitude: number;
   }>;
+  error?: string | null;
 };
 
 const fetcher = async <T,>(url: string): Promise<T> => {
@@ -190,6 +192,11 @@ export function PrivateOddsBoard({ refreshIntervalMs }: { refreshIntervalMs: num
               Unable to load odds right now.
             </p>
           ) : null}
+          {data?.error ? (
+            <p className="text-sm text-[#f87171]">
+              {data.error}
+            </p>
+          ) : null}
           {data?.fetchedAt ? (
             <p className="text-xs text-muted-foreground">
               Last updated {new Date(data.fetchedAt).toLocaleTimeString()} · refreshes every {Math.round(refreshIntervalMs / 1000)}s
@@ -284,6 +291,9 @@ export function PrivateOddsBoard({ refreshIntervalMs }: { refreshIntervalMs: num
             <CardTitle>Odds Movement Chart</CardTitle>
           </CardHeader>
           <CardContent className="h-[280px]">
+            {detailData?.error ? (
+              <p className="text-sm text-[#f87171]">{detailData.error}</p>
+            ) : null}
             {chartData.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No historical movement data available for the selected fixture.
@@ -328,20 +338,20 @@ export function PrivateOddsBoard({ refreshIntervalMs }: { refreshIntervalMs: num
                 </tr>
               </thead>
               <tbody>
-                {(detailData?.fixtureOdds.bookmakers ?? []).map((book) => {
+                {(detailData?.fixtureOdds?.bookmakers ?? []).map((book) => {
                   const bestHome =
-                    detailData?.bestOdds.bestHome.bookmaker === book.bookmaker;
+                    detailData?.bestOdds?.bestHome.bookmaker === book.bookmaker;
                   const bestAway =
-                    detailData?.bestOdds.bestAway.bookmaker === book.bookmaker;
+                    detailData?.bestOdds?.bestAway.bookmaker === book.bookmaker;
 
                   return (
                     <tr key={book.bookmaker} className="border-b border-border/40">
                       <td className="px-2 py-2 font-medium capitalize">{book.bookmaker.replace(/_/g, " ")}</td>
                       <td className="px-2 py-2">
-                        {formatOdds(book.homeOdds)} {bestHome ? "?" : ""}
+                        {formatOdds(book.homeOdds)} {bestHome ? "★" : ""}
                       </td>
                       <td className="px-2 py-2">
-                        {formatOdds(book.awayOdds)} {bestAway ? "?" : ""}
+                        {formatOdds(book.awayOdds)} {bestAway ? "★" : ""}
                       </td>
                       <td className="px-2 py-2">{marginPct(book.margin)}</td>
                       <td className="px-2 py-2">
@@ -362,7 +372,7 @@ export function PrivateOddsBoard({ refreshIntervalMs }: { refreshIntervalMs: num
         </Card>
       </div>
 
-      {detailData?.bestOdds.arbitrageExists ? (
+      {detailData?.bestOdds?.arbitrageExists ? (
         <Card>
           <CardHeader>
             <CardTitle>Arbitrage Scanner</CardTitle>

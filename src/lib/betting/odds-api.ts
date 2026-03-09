@@ -128,6 +128,204 @@ export class OddsPapiClient {
     this.apiKey = process.env.ODDSPAPI_API_KEY || "";
   }
 
+  private async fetchFirstSuccess(
+    candidates: Array<{ endpoint: string; params?: Record<string, string> }>,
+  ): Promise<unknown> {
+    let lastError: unknown = null;
+
+    for (const candidate of candidates) {
+      try {
+        return await this.fetch(candidate.endpoint, candidate.params);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError ?? new Error("No OddsPapi endpoint candidate succeeded.");
+  }
+
+  private extractRows(payload: unknown): Array<Record<string, unknown>> {
+    const root = payload as
+      | {
+          data?: unknown[];
+          fixtures?: unknown[];
+          odds?: unknown[];
+          tournaments?: unknown[];
+          sports?: unknown[];
+          results?: unknown[];
+          records?: unknown[];
+        }
+      | unknown[]
+      | null
+      | undefined;
+
+    const rows = Array.isArray(root)
+      ? root
+      : Array.isArray(root?.data)
+        ? root.data
+        : Array.isArray(root?.fixtures)
+          ? root.fixtures
+          : Array.isArray(root?.odds)
+            ? root.odds
+            : Array.isArray(root?.tournaments)
+              ? root.tournaments
+              : Array.isArray(root?.sports)
+                ? root.sports
+                : Array.isArray(root?.results)
+                  ? root.results
+                  : Array.isArray(root?.records)
+                    ? root.records
+                    : [];
+
+    return rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object");
+  }
+
+  private looksLikeLoLSport(value: Record<string, unknown>): boolean {
+    const joined = [
+      value.sportName,
+      value.name,
+      value.slug,
+      value.key,
+      value.code,
+      value.sportSlug,
+    ]
+      .map((field) => String(field ?? "").toLowerCase())
+      .join(" ");
+
+    return (
+      joined.includes("league of legends") ||
+      joined.includes("league-of-legends") ||
+      joined.includes(" lol ")
+    );
+  }
+
+  private async resolveLoLSportId(): Promise<string | null> {
+    const payload = await this.fetchFirstSuccess([
+      { endpoint: "/sports" },
+      { endpoint: "/sport" },
+    ]).catch(() => null);
+
+    if (!payload) {
+      return null;
+    }
+
+    const rows = this.extractRows(payload);
+    const sport = rows.find((row) => this.looksLikeLoLSport(row));
+    if (!sport) {
+      return null;
+    }
+
+    const sportId = sport.sportId ?? sport.id ?? sport.sport_id ?? sport.key ?? sport.slug;
+    return sportId ? String(sportId) : null;
+  }
+
+  private async resolveLoLTournamentIds(sportId: string): Promise<string[]> {
+    const payload = await this.fetchFirstSuccess([
+      { endpoint: "/tournaments", params: { sportId } },
+      { endpoint: `/sports/${encodeURIComponent(sportId)}/tournaments` },
+    ]).catch(() => null);
+
+    if (!payload) {
+      return [];
+    }
+
+    const rows = this.extractRows(payload);
+    return rows
+      .map((row) => row.tournamentId ?? row.id ?? row.tournament_id ?? row.key)
+      .map((value) => String(value ?? "").trim())
+      .filter((value) => value.length > 0);
+  }
+
+  private normalizeOddsPayload(payload: unknown): unknown {
+    const rows = this.extractRows(payload);
+    if (rows.length === 0) {
+      if (payload && typeof payload === "object") {
+        return { data: [this.normalizeOddsRow(payload as Record<string, unknown>)] };
+      }
+      return { data: [] };
+    }
+
+    return {
+      data: rows.map((row) => this.normalizeOddsRow(row)),
+    };
+  }
+
+  private normalizeOddsRow(row: Record<string, unknown>): Record<string, unknown> {
+    const normalized: Record<string, unknown> = { ...row };
+    const participant1 = String(
+      row.participant1Name ??
+        row.home_name ??
+        (row.home as Record<string, unknown> | undefined)?.name ??
+        row.homeTeam ??
+        row.team1 ??
+        "",
+    ).trim();
+    const participant2 = String(
+      row.participant2Name ??
+        row.away_name ??
+        (row.away as Record<string, unknown> | undefined)?.name ??
+        row.awayTeam ??
+        row.team2 ??
+        "",
+    ).trim();
+    if (participant1) {
+      normalized.home_name = participant1;
+    }
+    if (participant2) {
+      normalized.away_name = participant2;
+    }
+
+    const bookmakers = row.bookmakers;
+    if (bookmakers && !Array.isArray(bookmakers) && typeof bookmakers === "object") {
+      const bookmakerRows = Object.entries(bookmakers as Record<string, unknown>).map(
+        ([bookmakerKey, bookmakerValue]) => {
+          const raw = (bookmakerValue ?? {}) as Record<string, unknown>;
+          const marketRowsRaw = raw.markets;
+          let markets: unknown[] = [];
+          if (Array.isArray(marketRowsRaw)) {
+            markets = marketRowsRaw;
+          } else if (marketRowsRaw && typeof marketRowsRaw === "object") {
+            markets = Object.entries(marketRowsRaw as Record<string, unknown>).map(
+              ([marketKey, marketValue]) => ({
+                id: marketKey,
+                ...(typeof marketValue === "object" && marketValue
+                  ? (marketValue as Record<string, unknown>)
+                  : {}),
+              }),
+            );
+          }
+
+          const outcomesRaw = raw.outcomes;
+          const outcomes =
+            Array.isArray(outcomesRaw)
+              ? outcomesRaw
+              : outcomesRaw && typeof outcomesRaw === "object"
+                ? Object.entries(outcomesRaw as Record<string, unknown>).map(
+                    ([outcomeKey, outcomeValue]) => ({
+                      id: outcomeKey,
+                      ...(typeof outcomeValue === "object" && outcomeValue
+                        ? (outcomeValue as Record<string, unknown>)
+                        : {}),
+                    }),
+                  )
+                : [];
+
+          return {
+            key: bookmakerKey,
+            name: raw.name ?? bookmakerKey,
+            link: raw.deepLink ?? raw.link ?? raw.url,
+            markets,
+            outcomes,
+          };
+        },
+      );
+
+      normalized.bookmakers = bookmakerRows;
+    }
+
+    return normalized;
+  }
+
   private async fetch(endpoint: string, params?: Record<string, string>): Promise<unknown> {
     if (!this.apiKey) {
       throw new Error("ODDSPAPI_API_KEY is not configured.");
@@ -163,21 +361,71 @@ export class OddsPapiClient {
   }
 
   async getUpcomingFixtures(): Promise<FixtureOdds[]> {
-    const data = await this.fetch(`/sports/${LOL_SPORT_ID}/odds`, {
-      markets: String(MARKETS.MATCH_WINNER),
-      oddsFormat: "decimal",
-    });
+    const sportId = await this.resolveLoLSportId();
+    if (!sportId) {
+      return [];
+    }
 
-    return this.parseFixtureOdds(data);
+    const tournamentIds = await this.resolveLoLTournamentIds(sportId);
+    const tournamentParam = tournamentIds.slice(0, 40).join(",");
+
+    const payload = await this.fetchFirstSuccess([
+      {
+        endpoint: "/odds-by-tournaments",
+        params: {
+          tournamentIds: tournamentParam,
+          markets: String(MARKETS.MATCH_WINNER),
+          oddsFormat: "decimal",
+        },
+      },
+      {
+        endpoint: "/fixtures",
+        params: {
+          sportId,
+          oddsFormat: "decimal",
+        },
+      },
+      {
+        endpoint: `/sports/${encodeURIComponent(sportId)}/odds`,
+        params: {
+          markets: String(MARKETS.MATCH_WINNER),
+          oddsFormat: "decimal",
+        },
+      },
+    ]);
+
+    const parsed = this.parseFixtureOdds(this.normalizeOddsPayload(payload));
+    return parsed
+      .filter((row) => row.fixture.status === "pre" || row.fixture.status === "live")
+      .sort(
+        (a, b) =>
+          new Date(a.fixture.startTime).getTime() -
+          new Date(b.fixture.startTime).getTime(),
+      )
+      .slice(0, 30);
   }
 
   async getFixtureOdds(fixtureId: string): Promise<FixtureOdds> {
-    const data = await this.fetch(`/fixtures/${fixtureId}/odds`, {
-      markets: Object.values(MARKETS).join(","),
-      oddsFormat: "decimal",
-    });
+    const data = await this.fetchFirstSuccess([
+      {
+        endpoint: "/odds",
+        params: {
+          fixtureId,
+          markets: Object.values(MARKETS).join(","),
+          oddsFormat: "decimal",
+          verbosity: "3",
+        },
+      },
+      {
+        endpoint: `/fixtures/${fixtureId}/odds`,
+        params: {
+          markets: Object.values(MARKETS).join(","),
+          oddsFormat: "decimal",
+        },
+      },
+    ]);
 
-    const parsed = this.parseFixtureOdds(data);
+    const parsed = this.parseFixtureOdds(this.normalizeOddsPayload(data));
     const first = parsed[0];
     if (!first) {
       throw new Error(`No odds returned for fixture ${fixtureId}.`);
@@ -186,18 +434,47 @@ export class OddsPapiClient {
   }
 
   async getLiveOdds(): Promise<FixtureOdds[]> {
-    const data = await this.fetch(`/sports/${LOL_SPORT_ID}/odds/live`, {
-      markets: String(MARKETS.MATCH_WINNER),
-      oddsFormat: "decimal",
-    });
+    const sportId = await this.resolveLoLSportId();
+    if (!sportId) {
+      return [];
+    }
 
-    return this.parseFixtureOdds(data);
+    const data = await this.fetchFirstSuccess([
+      {
+        endpoint: "/live-odds",
+        params: {
+          sportId,
+          markets: String(MARKETS.MATCH_WINNER),
+          oddsFormat: "decimal",
+          verbosity: "3",
+        },
+      },
+      {
+        endpoint: `/sports/${encodeURIComponent(sportId)}/odds/live`,
+        params: {
+          markets: String(MARKETS.MATCH_WINNER),
+          oddsFormat: "decimal",
+        },
+      },
+    ]);
+
+    return this.parseFixtureOdds(this.normalizeOddsPayload(data));
   }
 
   async getHistoricalOdds(fixtureId: string): Promise<OddsMovement[]> {
-    const data = await this.fetch(`/fixtures/${fixtureId}/odds/history`, {
-      oddsFormat: "decimal",
-    });
+    const data = await this.fetchFirstSuccess([
+      {
+        endpoint: "/historical-odds",
+        params: {
+          fixtureId,
+          oddsFormat: "decimal",
+        },
+      },
+      {
+        endpoint: `/fixtures/${fixtureId}/odds/history`,
+        params: { oddsFormat: "decimal" },
+      },
+    ]);
 
     return this.parseOddsHistory(data);
   }
@@ -324,6 +601,8 @@ export class OddsPapiClient {
       String(
         (entry.league as Record<string, unknown> | undefined)?.name ??
           entry.league_name ??
+          entry.tournamentName ??
+          entry.tournament_name ??
           entry.tournament ??
           entry.competition ??
           "",
@@ -331,29 +610,38 @@ export class OddsPapiClient {
 
     const homeTeam =
       String(
+        entry.participant1Name ??
         (entry.home as Record<string, unknown> | undefined)?.name ??
-          (entry.homeTeam as Record<string, unknown> | undefined)?.name ??
-          entry.home_name ??
-          entry.homeTeam ??
-          entry.team1 ??
+        (entry.homeTeam as Record<string, unknown> | undefined)?.name ??
+        entry.home_name ??
+        entry.homeTeam ??
+        entry.team1 ??
           "",
       ).trim() || "Home";
 
     const awayTeam =
       String(
+        entry.participant2Name ??
         (entry.away as Record<string, unknown> | undefined)?.name ??
-          (entry.awayTeam as Record<string, unknown> | undefined)?.name ??
-          entry.away_name ??
-          entry.awayTeam ??
-          entry.team2 ??
-          "",
+        (entry.awayTeam as Record<string, unknown> | undefined)?.name ??
+        entry.away_name ??
+        entry.awayTeam ??
+        entry.team2 ??
+        "",
       ).trim() || "Away";
 
-    const statusRaw = String(entry.status ?? entry.state ?? "pre").toLowerCase();
+    const statusRaw = String(entry.status ?? entry.state ?? "").toLowerCase();
+    const statusId = toNumber(entry.statusId ?? entry.status_id, NaN);
     const status: OddsFixture["status"] =
-      statusRaw.includes("live") || statusRaw.includes("inprogress")
+      statusRaw.includes("live") ||
+      statusRaw.includes("inprogress") ||
+      statusRaw.includes("in_progress") ||
+      statusId === 2
         ? "live"
-        : statusRaw.includes("end") || statusRaw.includes("final")
+        : statusRaw.includes("end") ||
+            statusRaw.includes("final") ||
+            statusRaw.includes("closed") ||
+            statusId === 3
           ? "ended"
           : "pre";
 
@@ -379,11 +667,18 @@ export class OddsPapiClient {
   private parseBookmakers(entry: Record<string, unknown>, fixture: OddsFixture): BookmakerOdds[] {
     const rows = Array.isArray(entry.bookmakers)
       ? entry.bookmakers
-      : Array.isArray(entry.odds)
-        ? entry.odds
-        : Array.isArray((entry.markets as Record<string, unknown> | undefined)?.bookmakers)
-          ? ((entry.markets as Record<string, unknown>).bookmakers as unknown[])
-          : [];
+      : entry.bookmakers && typeof entry.bookmakers === "object"
+        ? Object.entries(entry.bookmakers as Record<string, unknown>).map(
+            ([key, value]) => ({
+              key,
+              ...(typeof value === "object" && value ? (value as Record<string, unknown>) : {}),
+            }),
+          )
+        : Array.isArray(entry.odds)
+          ? entry.odds
+          : Array.isArray((entry.markets as Record<string, unknown> | undefined)?.bookmakers)
+            ? ((entry.markets as Record<string, unknown>).bookmakers as unknown[])
+            : [];
 
     const books: BookmakerOdds[] = [];
 
@@ -429,9 +724,18 @@ export class OddsPapiClient {
 
     const markets = Array.isArray(bookmakerEntry.markets)
       ? bookmakerEntry.markets
-      : Array.isArray(bookmakerEntry.market)
-        ? (bookmakerEntry.market as unknown[])
-        : [];
+      : bookmakerEntry.markets && typeof bookmakerEntry.markets === "object"
+        ? Object.entries(bookmakerEntry.markets as Record<string, unknown>).map(
+            ([marketId, marketValue]) => ({
+              id: marketId,
+              ...(typeof marketValue === "object" && marketValue
+                ? (marketValue as Record<string, unknown>)
+                : {}),
+            }),
+          )
+        : Array.isArray(bookmakerEntry.market)
+          ? (bookmakerEntry.market as unknown[])
+          : [];
 
     for (const marketRow of markets) {
       const market = marketRow as Record<string, unknown>;
@@ -442,9 +746,18 @@ export class OddsPapiClient {
 
       const outcomes = Array.isArray(market.outcomes)
         ? market.outcomes
-        : Array.isArray(market.selections)
-          ? (market.selections as unknown[])
-          : [];
+        : market.outcomes && typeof market.outcomes === "object"
+          ? Object.entries(market.outcomes as Record<string, unknown>).map(
+              ([outcomeId, outcomeValue]) => ({
+                id: outcomeId,
+                ...(typeof outcomeValue === "object" && outcomeValue
+                  ? (outcomeValue as Record<string, unknown>)
+                  : {}),
+              }),
+            )
+          : Array.isArray(market.selections)
+            ? (market.selections as unknown[])
+            : [];
 
       const mapped = this.mapOutcomeArray(outcomes, fixture);
       if (mapped) {
@@ -454,9 +767,18 @@ export class OddsPapiClient {
 
     const fallbackOutcomes = Array.isArray(bookmakerEntry.outcomes)
       ? bookmakerEntry.outcomes
-      : Array.isArray(bookmakerEntry.selections)
-        ? (bookmakerEntry.selections as unknown[])
-        : [];
+      : bookmakerEntry.outcomes && typeof bookmakerEntry.outcomes === "object"
+        ? Object.entries(bookmakerEntry.outcomes as Record<string, unknown>).map(
+            ([outcomeId, outcomeValue]) => ({
+              id: outcomeId,
+              ...(typeof outcomeValue === "object" && outcomeValue
+                ? (outcomeValue as Record<string, unknown>)
+                : {}),
+            }),
+          )
+        : Array.isArray(bookmakerEntry.selections)
+          ? (bookmakerEntry.selections as unknown[])
+          : [];
 
     return this.mapOutcomeArray(fallbackOutcomes, fixture);
   }
@@ -465,10 +787,70 @@ export class OddsPapiClient {
     let homeOdds: number | null = null;
     let awayOdds: number | null = null;
 
+    const extractPrice = (outcome: Record<string, unknown>): number => {
+      const direct = toNumber(
+        outcome.price ??
+          outcome.odds ??
+          outcome.decimal ??
+          outcome.currentPrice ??
+          outcome.latestPrice,
+        NaN,
+      );
+      if (Number.isFinite(direct)) {
+        return direct;
+      }
+
+      if (Array.isArray(outcome.prices)) {
+        for (const row of outcome.prices) {
+          const value = toNumber(
+            (row as Record<string, unknown>).price ??
+              (row as Record<string, unknown>).odds ??
+              (row as Record<string, unknown>).decimal,
+            NaN,
+          );
+          if (Number.isFinite(value)) {
+            return value;
+          }
+        }
+      }
+
+      if (outcome.players && typeof outcome.players === "object") {
+        const playerBuckets = Object.values(outcome.players as Record<string, unknown>);
+        for (const bucket of playerBuckets) {
+          if (Array.isArray(bucket)) {
+            const last = bucket[bucket.length - 1] as Record<string, unknown> | undefined;
+            const value = toNumber(last?.price ?? last?.odds ?? last?.decimal, NaN);
+            if (Number.isFinite(value)) {
+              return value;
+            }
+          } else if (bucket && typeof bucket === "object") {
+            const value = toNumber(
+              (bucket as Record<string, unknown>).price ??
+                (bucket as Record<string, unknown>).odds ??
+                (bucket as Record<string, unknown>).decimal,
+              NaN,
+            );
+            if (Number.isFinite(value)) {
+              return value;
+            }
+          }
+        }
+      }
+
+      return NaN;
+    };
+
     for (const row of outcomes) {
       const outcome = row as Record<string, unknown>;
-      const name = String(outcome.name ?? outcome.label ?? outcome.participant ?? "").toLowerCase();
-      const price = toNumber(outcome.price ?? outcome.odds ?? outcome.decimal, NaN);
+      const name = String(
+        outcome.name ??
+          outcome.label ??
+          outcome.participant ??
+          outcome.participantName ??
+          outcome.outcomeName ??
+          "",
+      ).toLowerCase();
+      const price = extractPrice(outcome);
       if (!Number.isFinite(price)) {
         continue;
       }
@@ -510,92 +892,134 @@ export class OddsPapiClient {
   }
 
   private parseOddsHistory(data: unknown): OddsMovement[] {
-    const payload = data as
-      | { data?: unknown[]; history?: unknown[]; odds_history?: unknown[] }
-      | unknown[]
-      | null
-      | undefined;
-
-    const rows = Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload?.data)
-        ? payload.data
-        : Array.isArray(payload?.history)
-          ? payload.history
-          : Array.isArray(payload?.odds_history)
-            ? payload.odds_history
-            : [];
-
     const movement: OddsMovement[] = [];
+    const rows = this.extractRows(data);
 
-    for (const row of rows) {
-      const entry = row as Record<string, unknown>;
+    const parseOutcomeSeries = (outcome: Record<string, unknown>): Array<{ ts: string; price: number }> => {
+      if (Array.isArray(outcome.prices)) {
+        return outcome.prices
+          .map((row) => ({
+            ts: toIso((row as Record<string, unknown>).timestamp ?? (row as Record<string, unknown>).createdAt ?? Date.now()),
+            price: toNumber(
+              (row as Record<string, unknown>).price ??
+                (row as Record<string, unknown>).odds ??
+                (row as Record<string, unknown>).decimal,
+              NaN,
+            ),
+          }))
+          .filter((row) => Number.isFinite(row.price))
+          .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+      }
+
+      if (outcome.players && typeof outcome.players === "object") {
+        const buckets = Object.values(outcome.players as Record<string, unknown>);
+        const series: Array<{ ts: string; price: number }> = [];
+        for (const bucket of buckets) {
+          if (!Array.isArray(bucket)) {
+            continue;
+          }
+          for (const row of bucket) {
+            const price = toNumber(
+              (row as Record<string, unknown>).price ??
+                (row as Record<string, unknown>).odds ??
+                (row as Record<string, unknown>).decimal,
+              NaN,
+            );
+            if (!Number.isFinite(price)) {
+              continue;
+            }
+            series.push({
+              ts: toIso((row as Record<string, unknown>).createdAt ?? (row as Record<string, unknown>).timestamp ?? Date.now()),
+              price,
+            });
+          }
+        }
+        return series.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+      }
+
+      return [];
+    };
+
+    const parseFromEntry = (entry: Record<string, unknown>) => {
       const fixture = this.parseFixture(entry) ?? {
         id: String(entry.fixtureId ?? entry.fixture_id ?? "unknown"),
         sportId: LOL_SPORT_ID,
-        league: String(entry.league ?? "Unknown"),
+        league: String(entry.league ?? entry.tournamentName ?? "Unknown"),
         startTime: toIso(entry.startTime ?? Date.now()),
         status: "pre",
-        homeTeam: String(entry.homeTeam ?? entry.home ?? "Home"),
-        awayTeam: String(entry.awayTeam ?? entry.away ?? "Away"),
+        homeTeam: String(entry.participant1Name ?? entry.homeTeam ?? "Home"),
+        awayTeam: String(entry.participant2Name ?? entry.awayTeam ?? "Away"),
       };
 
-      const snapshots = Array.isArray(entry.snapshots)
-        ? entry.snapshots
-        : Array.isArray(entry.odds)
-          ? entry.odds
+      const bookmakers =
+        entry.bookmakers && typeof entry.bookmakers === "object" && !Array.isArray(entry.bookmakers)
+          ? Object.entries(entry.bookmakers as Record<string, unknown>)
           : [];
 
-      const previousByBook = new Map<string, { home: number; away: number; ts: string }>();
+      for (const [bookmakerKey, bookmakerValue] of bookmakers) {
+        const bookmaker = normalizeBookmaker(bookmakerKey);
+        const raw = (bookmakerValue ?? {}) as Record<string, unknown>;
+        const marketsRaw = raw.markets;
+        const marketRows = Array.isArray(marketsRaw)
+          ? marketsRaw
+          : marketsRaw && typeof marketsRaw === "object"
+            ? Object.values(marketsRaw as Record<string, unknown>)
+            : [];
 
-      for (const snap of snapshots) {
-        const snapEntry = snap as Record<string, unknown>;
-        const bookmaker = normalizeBookmaker(
-          snapEntry.bookmaker ?? snapEntry.key ?? snapEntry.name,
-        );
+        for (const marketValue of marketRows) {
+          const market = (marketValue ?? {}) as Record<string, unknown>;
+          const outcomesRaw = market.outcomes;
+          const outcomes = Array.isArray(outcomesRaw)
+            ? outcomesRaw
+            : outcomesRaw && typeof outcomesRaw === "object"
+              ? Object.values(outcomesRaw as Record<string, unknown>)
+              : [];
+          if (outcomes.length < 2) {
+            continue;
+          }
 
-        const home = toNumber(snapEntry.homeOdds ?? snapEntry.home_odds, NaN);
-        const away = toNumber(snapEntry.awayOdds ?? snapEntry.away_odds, NaN);
-        if (!Number.isFinite(home) || !Number.isFinite(away)) {
-          continue;
+          const homeSeries = parseOutcomeSeries((outcomes[0] ?? {}) as Record<string, unknown>);
+          const awaySeries = parseOutcomeSeries((outcomes[1] ?? {}) as Record<string, unknown>);
+          const pointCount = Math.min(homeSeries.length, awaySeries.length);
+          for (let index = 1; index < pointCount; index += 1) {
+            const prevHome = homeSeries[index - 1];
+            const currHome = homeSeries[index];
+            const prevAway = awaySeries[index - 1];
+            const currAway = awaySeries[index];
+            const homeMove = prevHome.price - currHome.price;
+            const awayMove = prevAway.price - currAway.price;
+            const magnitude = Math.max(Math.abs(homeMove), Math.abs(awayMove));
+            const direction: OddsMovement["direction"] =
+              magnitude < 0.005
+                ? "stable"
+                : homeMove > awayMove
+                  ? "home_shortening"
+                  : "away_shortening";
+
+            movement.push({
+              fixture,
+              bookmaker,
+              timestamp: currHome.ts,
+              previousHomeOdds: prevHome.price,
+              currentHomeOdds: currHome.price,
+              previousAwayOdds: prevAway.price,
+              currentAwayOdds: currAway.price,
+              direction,
+              magnitude,
+            });
+          }
         }
-
-        const ts = toIso(snapEntry.timestamp ?? snapEntry.updatedAt ?? Date.now());
-        const previous = previousByBook.get(bookmaker);
-        if (!previous) {
-          previousByBook.set(bookmaker, { home, away, ts });
-          continue;
-        }
-
-        const homeMove = previous.home - home;
-        const awayMove = previous.away - away;
-        const magnitude = Math.max(Math.abs(homeMove), Math.abs(awayMove));
-
-        const direction: OddsMovement["direction"] =
-          magnitude < 0.005
-            ? "stable"
-            : homeMove > awayMove
-              ? "home_shortening"
-              : "away_shortening";
-
-        movement.push({
-          fixture,
-          bookmaker,
-          timestamp: ts,
-          previousHomeOdds: previous.home,
-          currentHomeOdds: home,
-          previousAwayOdds: previous.away,
-          currentAwayOdds: away,
-          direction,
-          magnitude,
-        });
-
-        previousByBook.set(bookmaker, { home, away, ts });
       }
+    };
+
+    if (rows.length > 0) {
+      rows.forEach(parseFromEntry);
+    } else if (data && typeof data === "object") {
+      parseFromEntry(data as Record<string, unknown>);
     }
 
-    return movement.sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    return movement.sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
   }
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { aiCoach } from "@/lib/ai-coach";
 import { aiRateLimiter } from "@/lib/ai-rate-limiter";
@@ -12,6 +13,8 @@ import {
 } from "@/lib/contextual-build-engine";
 import { cdragonService } from "@/lib/cdragon";
 import { getChampions, getItems, getSummonerSpells } from "@/lib/data-dragon";
+import { getCurrentPatch } from "@/lib/data-collector";
+import { db, schema } from "@/lib/db";
 import { matchupGuideService } from "@/lib/matchup-guide";
 import { opggClient } from "@/lib/opgg-mcp";
 import { getProMatchupTip } from "@/lib/pro-insights";
@@ -88,6 +91,28 @@ type LiveScoutCacheEntry = {
 
 const LIVE_SCOUT_CACHE_TTL_MS = 5 * 60 * 1000;
 const liveScoutCache = new Map<string, LiveScoutCacheEntry>();
+
+type WinProbabilityFactor = {
+  label: string;
+  impact: number;
+  detail: string;
+};
+
+type WinProbabilitySnapshot = {
+  ally: number;
+  enemy: number;
+  confidence: "low" | "medium" | "high";
+  summary: string;
+  factors: WinProbabilityFactor[];
+};
+
+type WinProbabilityCacheEntry = {
+  value: WinProbabilitySnapshot;
+  expiresAt: number;
+};
+
+const LIVE_WIN_PROBABILITY_CACHE_TTL_MS = 2 * 60 * 1000;
+const liveWinProbabilityCache = new Map<string, WinProbabilityCacheEntry>();
 
 type LiveGameRouteContext = {
   params: Promise<{
@@ -204,6 +229,399 @@ function roleShort(role: Role): string {
     return "SUP";
   }
   return role;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function rankStrength(entries: LeagueEntryDto[]): { score: number; known: boolean } {
+  const solo = entries.find((entry) => entry.queueType === "RANKED_SOLO_5x5");
+  if (!solo) {
+    return { score: 0.5, known: false };
+  }
+
+  const tierScore: Record<string, number> = {
+    IRON: 0.2,
+    BRONZE: 0.28,
+    SILVER: 0.36,
+    GOLD: 0.45,
+    PLATINUM: 0.55,
+    EMERALD: 0.63,
+    DIAMOND: 0.73,
+    MASTER: 0.82,
+    GRANDMASTER: 0.9,
+    CHALLENGER: 0.96,
+  };
+  const divisionBonus: Record<string, number> = {
+    IV: 0,
+    III: 0.01,
+    II: 0.02,
+    I: 0.03,
+  };
+
+  const base = tierScore[solo.tier] ?? 0.5;
+  const division = divisionBonus[solo.rank] ?? 0;
+  const lpBonus = clamp((solo.leaguePoints ?? 0) / 1000, 0, 0.02);
+  return {
+    score: clamp(base + division + lpBonus, 0.05, 0.99),
+    known: true,
+  };
+}
+
+async function getRecentParticipantFormScore(
+  puuid: string,
+  championName: string,
+  role: Role,
+): Promise<{ score: number; sampleSize: number; recentWinRate: number; championWinRate: number }> {
+  if (!process.env.DATABASE_URL) {
+    return { score: 0, sampleSize: 0, recentWinRate: 0.5, championWinRate: 0.5 };
+  }
+
+  const rows = await db
+    .select({
+      win: schema.matchParticipants.win,
+      kills: schema.matchParticipants.kills,
+      deaths: schema.matchParticipants.deaths,
+      assists: schema.matchParticipants.assists,
+      championName: schema.matchParticipants.championName,
+      role: schema.matchParticipants.role,
+    })
+    .from(schema.matchParticipants)
+    .where(eq(schema.matchParticipants.puuid, puuid))
+    .orderBy(desc(schema.matchParticipants.id))
+    .limit(20);
+
+  if (rows.length === 0) {
+    return { score: 0, sampleSize: 0, recentWinRate: 0.5, championWinRate: 0.5 };
+  }
+
+  const sampleSize = rows.length;
+  const recentWinRate = rows.filter((row) => row.win).length / sampleSize;
+  const recentKda = average(
+    rows.map((row) => (row.kills + row.assists) / Math.max(1, row.deaths)),
+  );
+  const championRows = rows.filter(
+    (row) => row.championName === championName && row.role?.toUpperCase() === role,
+  );
+  const championWinRate =
+    championRows.length > 0
+      ? championRows.filter((row) => row.win).length / championRows.length
+      : recentWinRate;
+
+  let score = 0;
+  score += (recentWinRate - 0.5) * 0.42;
+  score += clamp((recentKda - 2.5) / 12, -0.07, 0.07);
+  score += (championWinRate - 0.5) * 0.25;
+  score *= clamp(sampleSize / 10, 0.35, 1);
+  score = clamp(score, -0.18, 0.18);
+
+  return {
+    score,
+    sampleSize,
+    recentWinRate,
+    championWinRate,
+  };
+}
+
+function computeCompTagEdge(params: {
+  allyTags: string[];
+  enemyTags: string[];
+  allyPrimaryDamage: "AP" | "AD" | "Mixed";
+  enemyPrimaryDamage: "AP" | "AD" | "Mixed";
+}): { impact: number; detail: string } {
+  const ally = new Set(params.allyTags);
+  const enemy = new Set(params.enemyTags);
+  let edge = 0;
+  const reasons: string[] = [];
+
+  const addSymmetricEdge = (
+    positiveCondition: () => boolean,
+    negativeCondition: () => boolean,
+    value: number,
+    positiveReason: string,
+    negativeReason: string,
+  ) => {
+    if (positiveCondition()) {
+      edge += value;
+      reasons.push(positiveReason);
+    }
+    if (negativeCondition()) {
+      edge -= value;
+      reasons.push(negativeReason);
+    }
+  };
+
+  addSymmetricEdge(
+    () => ally.has("scaling_comp") && enemy.has("early_game"),
+    () => enemy.has("scaling_comp") && ally.has("early_game"),
+    0.025,
+    "ally comp scales better into mid/late game",
+    "enemy comp scales better into mid/late game",
+  );
+
+  addSymmetricEdge(
+    () => ally.has("engage_comp") && enemy.has("poke_comp"),
+    () => enemy.has("engage_comp") && ally.has("poke_comp"),
+    0.02,
+    "ally engage can punish enemy poke setup",
+    "enemy engage can punish ally poke setup",
+  );
+
+  addSymmetricEdge(
+    () => ally.has("peel_heavy") && enemy.has("dive_comp"),
+    () => enemy.has("peel_heavy") && ally.has("dive_comp"),
+    0.018,
+    "ally peel tools blunt enemy dive threats",
+    "enemy peel tools blunt ally dive threats",
+  );
+
+  if (params.allyPrimaryDamage === "Mixed" && params.enemyPrimaryDamage !== "Mixed") {
+    edge += 0.012;
+    reasons.push("ally has mixed damage profile");
+  }
+  if (params.enemyPrimaryDamage === "Mixed" && params.allyPrimaryDamage !== "Mixed") {
+    edge -= 0.012;
+    reasons.push("enemy has mixed damage profile");
+  }
+
+  return {
+    impact: clamp(edge, -0.07, 0.07),
+    detail: reasons.length > 0 ? reasons.join("; ") : "composition matchup is mostly even",
+  };
+}
+
+async function computeLiveWinProbability(params: {
+  cacheKey: string;
+  allyParticipants: ScoutParticipant[];
+  enemyParticipants: ScoutParticipant[];
+  platform: string;
+  compAnalysis: Awaited<ReturnType<typeof classifyBothComps>>;
+  laneMatchupWinRate?: number | null;
+}): Promise<WinProbabilitySnapshot> {
+  const cached = liveWinProbabilityCache.get(params.cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const allParticipants = [...params.allyParticipants, ...params.enemyParticipants];
+  const allyTeamId = params.allyParticipants[0]?.teamId ?? 100;
+
+  const formRows = await Promise.all(
+    allParticipants.map((participant) =>
+      getRecentParticipantFormScore(
+        participant.puuid,
+        participant.championName,
+        participant.role,
+      ).catch(() => ({
+        score: 0,
+        sampleSize: 0,
+        recentWinRate: 0.5,
+        championWinRate: 0.5,
+      })),
+    ),
+  );
+  const formByPuuid = new Map(
+    allParticipants.map((participant, index) => [participant.puuid, formRows[index]]),
+  );
+  const allyFormScores = params.allyParticipants.map(
+    (participant) => formByPuuid.get(participant.puuid)?.score ?? 0,
+  );
+  const enemyFormScores = params.enemyParticipants.map(
+    (participant) => formByPuuid.get(participant.puuid)?.score ?? 0,
+  );
+  const allyFormSample = params.allyParticipants.reduce(
+    (sum, participant) => sum + (formByPuuid.get(participant.puuid)?.sampleSize ?? 0),
+    0,
+  );
+  const enemyFormSample = params.enemyParticipants.reduce(
+    (sum, participant) => sum + (formByPuuid.get(participant.puuid)?.sampleSize ?? 0),
+    0,
+  );
+  const formImpact = clamp(average(allyFormScores) - average(enemyFormScores), -0.12, 0.12);
+
+  const rankRows = await Promise.all(
+    allParticipants.map((participant) =>
+      cachedRiotAPI
+        .getRankedStats(participant.puuid, params.platform, "low")
+        .then(rankStrength)
+        .catch(() => ({ score: 0.5, known: false })),
+    ),
+  );
+  const rankKnownCount = rankRows.filter((row) => row.known).length;
+  const allyRankAvg = average(
+    allParticipants
+      .map((participant, index) => ({ participant, rank: rankRows[index] }))
+      .filter((row) => row.participant.teamId === allyTeamId)
+      .map((row) => row.rank.score),
+  );
+  const enemyRankAvg = average(
+    allParticipants
+      .map((participant, index) => ({ participant, rank: rankRows[index] }))
+      .filter((row) => row.participant.teamId !== allyTeamId)
+      .map((row) => row.rank.score),
+  );
+  const rankImpact = clamp((allyRankAvg - enemyRankAvg) * 0.22, -0.08, 0.08);
+
+  let championImpact = 0;
+  let championRowsCount = 0;
+  if (process.env.DATABASE_URL) {
+    const currentPatch = await getCurrentPatch().catch(() => null);
+    const participantChampions = allParticipants.map((participant) => participant.championName);
+    const participantRoles = allParticipants.map((participant) => participant.role);
+
+    let statRows = currentPatch
+      ? await db
+          .select({
+            championName: schema.championStats.championName,
+            role: schema.championStats.role,
+            winRate: schema.championStats.winRate,
+          })
+          .from(schema.championStats)
+          .where(
+            and(
+              eq(schema.championStats.patch, currentPatch),
+              eq(schema.championStats.tier, "ALL"),
+              inArray(schema.championStats.championName, participantChampions),
+              inArray(schema.championStats.role, participantRoles),
+            ),
+          )
+      : [];
+
+    if (statRows.length === 0) {
+      const latestPatch = await db
+        .select({ patch: schema.championStats.patch })
+        .from(schema.championStats)
+        .orderBy(desc(schema.championStats.computedAt))
+        .limit(1);
+      const fallbackPatch = latestPatch[0]?.patch ?? null;
+      if (fallbackPatch) {
+        statRows = await db
+          .select({
+            championName: schema.championStats.championName,
+            role: schema.championStats.role,
+            winRate: schema.championStats.winRate,
+          })
+          .from(schema.championStats)
+          .where(
+            and(
+              eq(schema.championStats.patch, fallbackPatch),
+              eq(schema.championStats.tier, "ALL"),
+              inArray(schema.championStats.championName, participantChampions),
+              inArray(schema.championStats.role, participantRoles),
+            ),
+          );
+      }
+    }
+
+    const statMap = new Map(
+      statRows.map((row) => [
+        `${row.championName.toLowerCase()}|${String(row.role).toUpperCase()}`,
+        Number(row.winRate ?? 0.5),
+      ]),
+    );
+    championRowsCount = statRows.length;
+
+    const allyWinRates = params.allyParticipants.map((participant) => {
+      const key = `${participant.championName.toLowerCase()}|${participant.role}`;
+      return statMap.get(key) ?? 0.5;
+    });
+    const enemyWinRates = params.enemyParticipants.map((participant) => {
+      const key = `${participant.championName.toLowerCase()}|${participant.role}`;
+      return statMap.get(key) ?? 0.5;
+    });
+    championImpact = clamp((average(allyWinRates) - average(enemyWinRates)) * 0.3, -0.06, 0.06);
+  }
+
+  const comp = computeCompTagEdge({
+    allyTags: params.compAnalysis.ally.tags,
+    enemyTags: params.compAnalysis.enemy.tags,
+    allyPrimaryDamage: params.compAnalysis.ally.primaryDamageType,
+    enemyPrimaryDamage: params.compAnalysis.enemy.primaryDamageType,
+  });
+  const compImpact = comp.impact;
+
+  const laneImpact = clamp(
+    ((params.laneMatchupWinRate ?? 0.5) - 0.5) * 0.12,
+    -0.04,
+    0.04,
+  );
+
+  const factors: WinProbabilityFactor[] = [
+    {
+      label: "Recent player form",
+      impact: formImpact,
+      detail: `Based on stored recent games (ally ${allyFormSample} samples, enemy ${enemyFormSample} samples).`,
+    },
+    {
+      label: "Rank strength",
+      impact: rankImpact,
+      detail: `Derived from live solo-queue rank checks (${rankKnownCount}/10 players resolved).`,
+    },
+    {
+      label: "Champion patch performance",
+      impact: championImpact,
+      detail:
+        championRowsCount > 0
+          ? `Role-specific champion win rates from current patch stats (${championRowsCount} rows).`
+          : "No champion stat rows available; neutral impact.",
+    },
+    {
+      label: "Team composition matchup",
+      impact: compImpact,
+      detail: comp.detail,
+    },
+    {
+      label: "Lane matchup edge",
+      impact: laneImpact,
+      detail:
+        params.laneMatchupWinRate !== null && params.laneMatchupWinRate !== undefined
+          ? `Matchup guide baseline: ${(params.laneMatchupWinRate * 100).toFixed(1)}%`
+          : "No matchup guide baseline available.",
+    },
+  ];
+
+  const totalEdge = clamp(
+    factors.reduce((sum, factor) => sum + factor.impact, 0),
+    -0.42,
+    0.42,
+  );
+  const ally = clamp(0.5 + totalEdge, 0.08, 0.92);
+  const enemy = 1 - ally;
+
+  const strongSignals = [
+    allyFormSample + enemyFormSample >= 50,
+    rankKnownCount >= 6,
+    championRowsCount >= 6,
+    Math.abs(compImpact) >= 0.02,
+    Math.abs(laneImpact) >= 0.01,
+  ].filter(Boolean).length;
+  const confidence: WinProbabilitySnapshot["confidence"] =
+    strongSignals >= 4 ? "high" : strongSignals >= 2 ? "medium" : "low";
+  const leaning = ally >= 0.55 ? "your team" : ally <= 0.45 ? "enemy team" : "close to even";
+  const summary = `Model leans ${leaning}. Confidence: ${confidence}.`;
+
+  const snapshot: WinProbabilitySnapshot = {
+    ally,
+    enemy,
+    confidence,
+    summary,
+    factors: factors.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact)),
+  };
+
+  liveWinProbabilityCache.set(params.cacheKey, {
+    value: snapshot,
+    expiresAt: Date.now() + LIVE_WIN_PROBABILITY_CACHE_TTL_MS,
+  });
+
+  return snapshot;
 }
 
 function inferTeamRoles(
@@ -1152,6 +1570,15 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
         mergedThreeThings.length > 0 ? mergedThreeThings : aiScout.three_things_to_remember,
     };
 
+    const winProbability = await computeLiveWinProbability({
+      cacheKey: `${activeGame.gameId}:${ourParticipant.teamId}`,
+      allyParticipants,
+      enemyParticipants,
+      platform,
+      compAnalysis,
+      laneMatchupWinRate: matchupGuide?.winRate ?? null,
+    });
+
     const proMatchupTip = await getProMatchupTip({
       ourChampion: ourParticipant.championName,
       enemyChampion: laneOpponent.championName,
@@ -1225,6 +1652,7 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
       laneOpponent: laneOpponentStats,
       allEnemies: allEnemyStats,
       aiScout: hydratedScout,
+      winProbability,
       abilityIcons,
       keyAbilityIcon,
       laneMatchupIcons: {

@@ -78,6 +78,17 @@ type LiveGameApiResponse =
       laneOpponent: EnemyScoutingStats;
       allEnemies: EnemyScoutingStats[];
       aiScout: LiveGameScoutOutput;
+      winProbability: {
+        ally: number;
+        enemy: number;
+        confidence: "low" | "medium" | "high";
+        summary: string;
+        factors: Array<{
+          label: string;
+          impact: number;
+          detail: string;
+        }>;
+      };
       abilityIcons?: {
         our: Record<"P" | "Q" | "W" | "E" | "R", string | null>;
         enemy: Record<"P" | "Q" | "W" | "E" | "R", string | null>;
@@ -135,6 +146,16 @@ function difficultyBadgeClass(difficulty: LiveGameScoutOutput["lane_matchup"]["d
     return "bg-[#ef4444] text-white";
   }
   return "bg-[#f59e0b] text-black";
+}
+
+function probabilityBarClass(value: number): string {
+  if (value >= 0.55) {
+    return "bg-[#10b981]";
+  }
+  if (value <= 0.45) {
+    return "bg-[#ef4444]";
+  }
+  return "bg-[#f59e0b]";
 }
 
 async function liveGameFetcher(url: string): Promise<LiveGameApiResponse> {
@@ -315,6 +336,59 @@ export default function LiveGamePage() {
               <p className="mt-1 text-base font-medium text-foreground">{line}</p>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>Pre-Game Win Probability</CardTitle>
+            <Badge variant="outline">
+              Confidence: {scout.winProbability.confidence.toUpperCase()}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Your Team</p>
+              <p className="mt-1 text-2xl font-semibold text-foreground">
+                {(scout.winProbability.ally * 100).toFixed(1)}%
+              </p>
+            </div>
+            <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Enemy Team</p>
+              <p className="mt-1 text-2xl font-semibold text-foreground">
+                {(scout.winProbability.enemy * 100).toFixed(1)}%
+              </p>
+            </div>
+          </div>
+          <div className="h-3 rounded-full bg-border/60">
+            <div
+              className={`h-3 rounded-full transition-all ${probabilityBarClass(scout.winProbability.ally)}`}
+              style={{ width: `${Math.round(scout.winProbability.ally * 100)}%` }}
+            />
+          </div>
+          <p className="text-sm text-muted-foreground">{scout.winProbability.summary}</p>
+          <div className="space-y-2">
+            {scout.winProbability.factors.slice(0, 5).map((factor) => (
+              <div
+                key={`${factor.label}-${factor.impact}`}
+                className="rounded-md border border-border/60 bg-background/20 p-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-foreground">{factor.label}</p>
+                  <Badge
+                    variant="outline"
+                    className={factor.impact >= 0 ? "text-[#34d399]" : "text-[#f87171]"}
+                  >
+                    {(factor.impact * 100).toFixed(1)}%
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{factor.detail}</p>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 

@@ -8,10 +8,22 @@ export async function GET(request: Request) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  const live = await oddsClient.getLiveOdds();
-  return NextResponse.json({
-    fixtures: live,
-    fetchedAt: new Date().toISOString(),
-  });
+  try {
+    const live = await oddsClient.getLiveOdds();
+    return NextResponse.json({
+      fixtures: live,
+      fetchedAt: new Date().toISOString(),
+      error: null,
+    });
+  } catch (error) {
+    return NextResponse.json({
+      fixtures: [],
+      fetchedAt: new Date().toISOString(),
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to load live odds.",
+    });
+  }
 }
 
