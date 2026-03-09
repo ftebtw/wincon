@@ -1,9 +1,10 @@
-﻿import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-import {
-  getBettingAdminCookieName,
-  isBettingAccessEnabled,
-} from "@/lib/betting/auth";
+const BETTING_COOKIE_NAME = "wincon_betting_admin";
+
+function isBettingAccessEnabled(): boolean {
+  return (process.env.BETTING_ADMIN_PASSWORD ?? "").length > 0;
+}
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -29,8 +30,7 @@ export function middleware(request: NextRequest) {
   const allowedWithoutCookie =
     pathname === "/private/login" || pathname === "/api/private/auth";
 
-  const cookieName = getBettingAdminCookieName();
-  const hasCookie = request.cookies.get(cookieName)?.value === "1";
+  const hasCookie = request.cookies.get(BETTING_COOKIE_NAME)?.value === "1";
 
   if (allowedWithoutCookie || hasCookie) {
     return NextResponse.next();
@@ -49,4 +49,3 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: ["/private/:path*", "/api/private/:path*"],
 };
-
