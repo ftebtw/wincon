@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./load-env";
 
 import { DataCollector, getCurrentPatch } from "../src/lib/data-collector";
 import { pool } from "../src/lib/db";
