@@ -79,6 +79,16 @@ interface EnemyScoutingStats {
   name?: string;
 }
 
+type LiveScoutResult = Awaited<ReturnType<typeof aiCoach.scoutLiveGame>>;
+
+type LiveScoutCacheEntry = {
+  value: LiveScoutResult;
+  expiresAt: number;
+};
+
+const LIVE_SCOUT_CACHE_TTL_MS = 5 * 60 * 1000;
+const liveScoutCache = new Map<string, LiveScoutCacheEntry>();
+
 type LiveGameRouteContext = {
   params: Promise<{
     riotId: string;
@@ -654,6 +664,27 @@ function formatCounterList(
     .join(", ");
 }
 
+function getCachedLiveScout(cacheKey: string): LiveScoutResult | null {
+  const cached = liveScoutCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    liveScoutCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached.value;
+}
+
+function setCachedLiveScout(cacheKey: string, value: LiveScoutResult): void {
+  liveScoutCache.set(cacheKey, {
+    value,
+    expiresAt: Date.now() + LIVE_SCOUT_CACHE_TTL_MS,
+  });
+}
+
 export async function GET(_request: Request, { params }: LiveGameRouteContext) {
   const selectedRegion = getRegionFromRequest(_request);
   const { riotId } = await params;
@@ -889,9 +920,17 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
     const allyTeamForAi = formatTeamForAi(allyParticipants);
     const enemyTeamForAi = formatTeamForAi(enemyParticipants);
 
-    const scoutRateLimit = aiRateLimiter.consume(_request, { userId: account.puuid });
-    const aiScout = scoutRateLimit.allowed
-      ? await aiCoach.scoutLiveGame({
+    const scoutCacheKey = `${account.puuid}:${activeGame.gameId}`;
+    const cachedScout = getCachedLiveScout(scoutCacheKey);
+    let aiRateLimited = false;
+    let aiScout: LiveScoutResult;
+
+    if (cachedScout) {
+      aiScout = cachedScout;
+    } else {
+      const scoutRateLimit = aiRateLimiter.consume(_request, { userId: account.puuid });
+      if (scoutRateLimit.allowed) {
+        aiScout = await aiCoach.scoutLiveGame({
           playerPuuid: account.puuid,
           ourChampion: ourParticipant.championName,
           ourRole: roleShort(ourParticipant.role),
@@ -941,37 +980,51 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
                 : undefined,
             avgKDA: enemy.avgKDA,
           })),
-        })
-      : {
+        });
+        setCachedLiveScout(scoutCacheKey, aiScout);
+      } else {
+        aiRateLimited = true;
+        aiScout = {
           lane_matchup: {
             difficulty: "medium",
-            their_win_condition: "AI scout rate limit reached for today.",
-            your_win_condition: "Use comp tags and lane matchup basics for now.",
-            power_spikes: "Unavailable due to AI daily limit.",
-            key_ability_to_watch: "Unavailable due to AI daily limit.",
+            their_win_condition:
+              matchupGuide?.earlyGame?.tradingPattern ??
+              `${laneOpponent.championName} can punish if you overextend early.`,
+            your_win_condition:
+              matchupGuide?.earlyGame?.levels1to3 ??
+              `Play around ${ourParticipant.championName} spikes and trade on cooldown windows.`,
+            power_spikes:
+              matchupGuide?.levelSixSpike ??
+              "Play around level 6 and first-item timing for your role.",
+            key_ability_to_watch:
+              matchupGuide?.abilityTradeWindows?.dangerAbility ??
+              `${laneOpponent.championName}'s key engage cooldown.`,
           },
           enemy_player_tendencies: {
-            playstyle: "Unavailable due to AI daily limit.",
+            playstyle: laneOpponentStats.playstyle,
             exploitable_weaknesses: [],
             danger_zones: [],
           },
           team_fight_plan: {
-            their_comp_identity: "Unavailable due to AI daily limit.",
-            our_comp_identity: "Unavailable due to AI daily limit.",
-            how_to_win_fights:
-              "You've used your 3 free AI analyses today. Come back tomorrow or create an account for more.",
+            their_comp_identity: compAnalysis.enemy.teamIdentity,
+            our_comp_identity: compAnalysis.ally.teamIdentity,
+            how_to_win_fights: `Play to ${compAnalysis.ally.teamIdentity}. Deny ${compAnalysis.enemy.teamIdentity} win condition by tracking key cooldowns and fighting on your spike timings.`,
           },
           recommended_build_path: {
-            core_items: [],
+            core_items:
+              contextualBuild?.build.items.slice(0, 3).map((item) => item.item) ?? [],
             reasoning:
-              "AI build path is unavailable due to today's AI usage limit.",
+              "Using data-only fallback because today's AI scout limit was reached.",
           },
           three_things_to_remember: [
-            "You've used your 3 free AI analyses today.",
-            "Comp tags and enemy stats are still available below.",
-            "Come back tomorrow or create an account for more.",
+            "AI scout daily cap reached; using data-driven fallback.",
+            `Their comp: ${compAnalysis.enemy.teamIdentity}.`,
+            `Your comp: ${compAnalysis.ally.teamIdentity}.`,
           ],
         };
+      }
+    }
+
     const mergedThreeThings = uniqueLines([
       ...(matchupGuide?.tips?.slice(0, 2) ?? []),
       ...aiScout.three_things_to_remember,
@@ -1048,7 +1101,7 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
 
     return NextResponse.json({
       inGame: true,
-      aiRateLimited: !scoutRateLimit.allowed,
+      aiRateLimited,
       loadingMoreData,
       checkedAt: new Date().toISOString(),
       game: {
