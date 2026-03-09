@@ -41,82 +41,92 @@ export default async function ProLandingPage({ searchParams }: ProLandingPagePro
     : "LCK";
   const sort = rawSort === "games" ? "games" : "winrate";
 
-  const teamFilters: SQL[] = [];
-  if (selectedLeague !== "Other") {
-    teamFilters.push(eq(schema.proTeams.league, selectedLeague));
-  }
-
-  const teamRows = await db
-    .select()
-    .from(schema.proTeams)
-    .where(teamFilters.length > 0 ? and(...teamFilters) : undefined);
-
-  const teamNames = teamRows.map((team) => team.teamName);
-
-  const statsFilters: SQL[] = [];
-  if (selectedLeague !== "Other") {
-    statsFilters.push(eq(schema.proTeamStats.league, selectedLeague));
-  }
-  if (teamNames.length > 0) {
-    statsFilters.push(inArray(schema.proTeamStats.teamName, teamNames));
-  }
-
-  const statsRows = teamNames.length > 0
-    ? await db
-        .select()
-        .from(schema.proTeamStats)
-        .where(statsFilters.length > 0 ? and(...statsFilters) : undefined)
-        .orderBy(desc(schema.proTeamStats.computedAt))
-    : [];
-
-  const latestByTeam = new Map<string, (typeof statsRows)[number]>();
-  for (const row of statsRows) {
-    if (!latestByTeam.has(row.teamName)) {
-      latestByTeam.set(row.teamName, row);
-    }
-  }
-
-  const standings: StandingRow[] = teamRows.map((team) => {
-    const latest = latestByTeam.get(team.teamName);
-    const wins = toNumber(latest?.wins ?? team.wins);
-    const losses = toNumber(latest?.losses ?? team.losses);
-    const gamesPlayed = toNumber(latest?.gamesPlayed ?? wins + losses);
-    const winRate = toNumber(latest?.winRate ?? team.winRate ?? (gamesPlayed > 0 ? wins / gamesPlayed : 0));
-
-    return {
-      teamName: team.teamName,
-      teamSlug: team.teamSlug,
-      league: team.league,
-      wins,
-      losses,
-      winRate,
-      gamesPlayed,
-    };
-  });
-
-  standings.sort((a, b) => {
-    if (sort === "games") {
-      if (b.gamesPlayed !== a.gamesPlayed) {
-        return b.gamesPlayed - a.gamesPlayed;
-      }
-      return b.winRate - a.winRate;
-    }
-
-    if (b.winRate !== a.winRate) {
-      return b.winRate - a.winRate;
-    }
-
-    return b.gamesPlayed - a.gamesPlayed;
-  });
-
+  let standings: StandingRow[] = [];
   let prediction: Awaited<ReturnType<ProMatchPredictor["predictMatch"]>> | null = null;
-  if (standings.length >= 2 && selectedLeague !== "Other") {
-    const predictor = new ProMatchPredictor();
-    prediction = await predictor.predictMatch(
-      standings[0].teamName,
-      standings[1].teamName,
-      selectedLeague,
-    );
+  let loadError: string | null = null;
+
+  try {
+    const teamFilters: SQL[] = [];
+    if (selectedLeague !== "Other") {
+      teamFilters.push(eq(schema.proTeams.league, selectedLeague));
+    }
+
+    const teamRows = await db
+      .select()
+      .from(schema.proTeams)
+      .where(teamFilters.length > 0 ? and(...teamFilters) : undefined);
+
+    const teamNames = teamRows.map((team) => team.teamName);
+
+    const statsFilters: SQL[] = [];
+    if (selectedLeague !== "Other") {
+      statsFilters.push(eq(schema.proTeamStats.league, selectedLeague));
+    }
+    if (teamNames.length > 0) {
+      statsFilters.push(inArray(schema.proTeamStats.teamName, teamNames));
+    }
+
+    const statsRows = teamNames.length > 0
+      ? await db
+          .select()
+          .from(schema.proTeamStats)
+          .where(statsFilters.length > 0 ? and(...statsFilters) : undefined)
+          .orderBy(desc(schema.proTeamStats.computedAt))
+      : [];
+
+    const latestByTeam = new Map<string, (typeof statsRows)[number]>();
+    for (const row of statsRows) {
+      if (!latestByTeam.has(row.teamName)) {
+        latestByTeam.set(row.teamName, row);
+      }
+    }
+
+    standings = teamRows.map((team) => {
+      const latest = latestByTeam.get(team.teamName);
+      const wins = toNumber(latest?.wins ?? team.wins);
+      const losses = toNumber(latest?.losses ?? team.losses);
+      const gamesPlayed = toNumber(latest?.gamesPlayed ?? wins + losses);
+      const winRate = toNumber(latest?.winRate ?? team.winRate ?? (gamesPlayed > 0 ? wins / gamesPlayed : 0));
+
+      return {
+        teamName: team.teamName,
+        teamSlug: team.teamSlug,
+        league: team.league,
+        wins,
+        losses,
+        winRate,
+        gamesPlayed,
+      };
+    });
+
+    standings.sort((a, b) => {
+      if (sort === "games") {
+        if (b.gamesPlayed !== a.gamesPlayed) {
+          return b.gamesPlayed - a.gamesPlayed;
+        }
+        return b.winRate - a.winRate;
+      }
+
+      if (b.winRate !== a.winRate) {
+        return b.winRate - a.winRate;
+      }
+
+      return b.gamesPlayed - a.gamesPlayed;
+    });
+
+    if (standings.length >= 2 && selectedLeague !== "Other") {
+      const predictor = new ProMatchPredictor();
+      prediction = await predictor.predictMatch(
+        standings[0].teamName,
+        standings[1].teamName,
+        selectedLeague,
+      );
+    }
+  } catch (error) {
+    console.error("[ProPage] Failed to load standings.", error);
+    standings = [];
+    prediction = null;
+    loadError = "Pro data is temporarily unavailable. Live banner and other sections will keep working.";
   }
 
   return (
@@ -160,6 +170,9 @@ export default async function ProLandingPage({ searchParams }: ProLandingPagePro
           </div>
         </CardHeader>
         <CardContent className="overflow-x-auto">
+          {loadError ? (
+            <p className="text-sm text-muted-foreground">{loadError}</p>
+          ) : null}
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-border/60 text-left text-muted-foreground">
@@ -185,6 +198,13 @@ export default async function ProLandingPage({ searchParams }: ProLandingPagePro
                   <td className="px-2 py-2">{team.gamesPlayed}</td>
                 </tr>
               ))}
+              {standings.length === 0 ? (
+                <tr>
+                  <td className="px-2 py-3 text-muted-foreground" colSpan={4}>
+                    No standings data available yet.
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </CardContent>
