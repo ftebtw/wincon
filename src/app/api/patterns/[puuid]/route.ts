@@ -2,10 +2,18 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { aiCoach } from "@/lib/ai-coach";
+import { aiRateLimiter } from "@/lib/ai-rate-limiter";
 import { cachedRiotAPI } from "@/lib/cache";
 import { classifyBothComps } from "@/lib/comp-classifier";
 import { getItems } from "@/lib/data-dragon";
 import { db, schema } from "@/lib/db";
+import {
+  buildRegionalCandidates,
+  getRegionConfig,
+  getRegionFromPlatform,
+  getRegionFromRequest,
+  type Region,
+} from "@/lib/regions";
 import {
   evaluateBuildCoverage,
   runAllDetectors,
@@ -37,27 +45,6 @@ type PatternsApiResponse = {
   recentGames: GameSummary[];
   generatedAt: string;
   cached: boolean;
-};
-
-const FALLBACK_REGIONS = ["americas", "europe", "asia", "sea"];
-
-const PLATFORM_TO_REGION: Record<string, string> = {
-  na1: "americas",
-  br1: "americas",
-  la1: "americas",
-  la2: "americas",
-  oc1: "americas",
-  euw1: "europe",
-  eun1: "europe",
-  tr1: "europe",
-  ru: "europe",
-  kr: "asia",
-  jp1: "asia",
-  ph2: "sea",
-  sg2: "sea",
-  th2: "sea",
-  tw2: "sea",
-  vn2: "sea",
 };
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -131,15 +118,15 @@ function positionLabel(position: { x: number; y: number } | undefined): string {
   return "jungle";
 }
 
-function getRegionCandidates(matchId: string): string[] {
+function getRegionCandidates(matchId: string, preferredRegion: Region): string[] {
   const platform = matchId.split("_")[0]?.toLowerCase() ?? "";
-  const inferred = PLATFORM_TO_REGION[platform];
+  const inferredRegion = getRegionFromPlatform(platform);
+  const inferred = inferredRegion ? getRegionConfig(inferredRegion).regional : undefined;
 
-  if (!inferred) {
-    return [...FALLBACK_REGIONS];
-  }
-
-  return [inferred, ...FALLBACK_REGIONS.filter((region) => region !== inferred)];
+  return buildRegionalCandidates({
+    preferredRegion,
+    inferredRegional: inferred,
+  });
 }
 
 function defaultChampionStats(): TimelineChampionStatsDto {
@@ -365,11 +352,17 @@ async function loadMatchWithTimelineFromDb(matchId: string): Promise<{ match: Ma
 
 async function fetchMatchWithTimelineFromRiot(
   matchId: string,
+  selectedRegion: Region,
   preferredRegion?: string,
 ): Promise<{ match: MatchDto; timeline: MatchTimelineDto }> {
   const orderedRegions = preferredRegion
-    ? [preferredRegion, ...getRegionCandidates(matchId).filter((region) => region !== preferredRegion)]
-    : getRegionCandidates(matchId);
+    ? [
+        preferredRegion,
+        ...getRegionCandidates(matchId, selectedRegion).filter(
+          (region) => region !== preferredRegion,
+        ),
+      ]
+    : getRegionCandidates(matchId, selectedRegion);
 
   for (const region of orderedRegions) {
     try {
@@ -502,10 +495,15 @@ async function persistMatchAndTimeline(match: MatchDto, timeline: MatchTimelineD
   });
 }
 
-async function getRecentMatchIds(puuid: string, count = 15): Promise<{ matchIds: string[]; regionHint?: string }> {
+async function getRecentMatchIds(
+  puuid: string,
+  count = 15,
+  selectedRegion: Region,
+): Promise<{ matchIds: string[]; regionHint?: string }> {
+  const fallbackRegions = buildRegionalCandidates({ preferredRegion: selectedRegion });
   let fallback: string[] = [];
 
-  for (const region of FALLBACK_REGIONS) {
+  for (const region of fallbackRegions) {
     try {
       const matchIds = await cachedRiotAPI.getMatchIds(puuid, { count, queue: 420 }, region);
       if (matchIds.length > 0) {
@@ -721,7 +719,19 @@ async function buildGameSummary(
 }
 
 export async function GET(_request: Request, { params }: PatternsRouteContext) {
+  const selectedRegion = getRegionFromRequest(_request);
   const { puuid } = await params;
+
+  const rateLimit = aiRateLimiter.consume(_request, { userId: puuid });
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: rateLimit.message,
+        resetAt: rateLimit.resetAt,
+      },
+      { status: 429 },
+    );
+  }
 
   try {
     const cached = await getCachedPatternBundle(puuid);
@@ -729,7 +739,11 @@ export async function GET(_request: Request, { params }: PatternsRouteContext) {
       return NextResponse.json(cached);
     }
 
-    const { matchIds, regionHint } = await getRecentMatchIds(puuid, 15);
+    const { matchIds, regionHint } = await getRecentMatchIds(
+      puuid,
+      15,
+      selectedRegion,
+    );
     if (matchIds.length === 0) {
       return NextResponse.json(
         { error: "No recent ranked matches found for this player." },
@@ -747,7 +761,11 @@ export async function GET(_request: Request, { params }: PatternsRouteContext) {
           } satisfies MatchWithData;
         }
 
-        const fetched = await fetchMatchWithTimelineFromRiot(matchId, regionHint);
+        const fetched = await fetchMatchWithTimelineFromRiot(
+          matchId,
+          selectedRegion,
+          regionHint,
+        );
         await persistMatchAndTimeline(fetched.match, fetched.timeline);
 
         return {
@@ -781,6 +799,7 @@ export async function GET(_request: Request, { params }: PatternsRouteContext) {
 
     const identity = await getPlayerIdentity(puuid);
     const aiAnalysis = await aiCoach.detectPatterns({
+      playerPuuid: puuid,
       playerInfo: {
         gameName: identity.gameName,
         tagLine: identity.tagLine,

@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import type { PBEDiffReport } from "@/lib/pbe-diff-engine";
 import { pbeDiffEngine } from "@/lib/pbe-diff-engine";
 
@@ -143,7 +144,10 @@ export async function GET(request: Request) {
         .where(and(eq(schema.collectionJobs.id, jobId), eq(schema.collectionJobs.jobType, "pbe_check")));
     }
 
-    console.error("[PBECheckCron] Failed:", error);
+    logger.error("PBE check cron failed.", {
+      endpoint: "/api/cron/pbe-check",
+      error: error instanceof Error ? error.message : String(error),
+    });
     return Response.json({ error: "PBE check failed." }, { status: 500 });
   }
 }

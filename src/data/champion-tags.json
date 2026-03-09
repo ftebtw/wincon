@@ -1,0 +1,941 @@
+{
+  "lastVerifiedPatch": "16.5",
+  "generatedAt": "2026-03-09T00:38:13.616Z",
+  "champions": {
+    "Aatrox": [
+      "ad_damage",
+      "drain_tank",
+      "fighter",
+      "healing"
+    ],
+    "Ahri": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "mage"
+    ],
+    "Akali": [
+      "ad_damage",
+      "ap_damage",
+      "assassin"
+    ],
+    "Akshan": [
+      "ad_damage",
+      "assassin",
+      "marksman"
+    ],
+    "Alistar": [
+      "ap_damage",
+      "support",
+      "tank"
+    ],
+    "Ambessa": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Amumu": [
+      "ap_damage",
+      "cc",
+      "engage",
+      "support",
+      "tank"
+    ],
+    "Anivia": [
+      "ap_damage",
+      "mage"
+    ],
+    "Annie": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Aphelios": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Ashe": [
+      "ad_damage",
+      "ap_damage",
+      "cc",
+      "marksman",
+      "support"
+    ],
+    "Aurelion Sol": [
+      "ap_damage",
+      "mage"
+    ],
+    "Aurora": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "mage"
+    ],
+    "Azir": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Bard": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Bel'Veth": [
+      "ad_damage",
+      "fighter"
+    ],
+    "Blitzcrank": [
+      "ap_damage",
+      "support",
+      "tank"
+    ],
+    "Brand": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Braum": [
+      "ap_damage",
+      "peel",
+      "support",
+      "tank"
+    ],
+    "Briar": [
+      "ad_damage",
+      "assassin",
+      "fighter",
+      "healing"
+    ],
+    "Caitlyn": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Camille": [
+      "ad_damage",
+      "assassin",
+      "fighter",
+      "split_push"
+    ],
+    "Cassiopeia": [
+      "ap_damage",
+      "mage"
+    ],
+    "Cho'Gath": [
+      "ap_damage",
+      "mage",
+      "tank"
+    ],
+    "Corki": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Darius": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Diana": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Dr. Mundo": [
+      "ad_damage",
+      "fighter",
+      "healing",
+      "tank"
+    ],
+    "Draven": [
+      "ad_damage",
+      "early_game",
+      "marksman"
+    ],
+    "Ekko": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "mage"
+    ],
+    "Elise": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "early_game",
+      "mage"
+    ],
+    "Evelynn": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "mage"
+    ],
+    "Ezreal": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Fiddlesticks": [
+      "ap_damage",
+      "healing",
+      "mage",
+      "support"
+    ],
+    "Fiora": [
+      "ad_damage",
+      "assassin",
+      "fighter",
+      "split_push"
+    ],
+    "Fizz": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Galio": [
+      "ap_damage",
+      "mage",
+      "tank"
+    ],
+    "Gangplank": [
+      "ad_damage",
+      "fighter"
+    ],
+    "Garen": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Gnar": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Gragas": [
+      "ad_damage",
+      "ap_damage",
+      "fighter",
+      "mage"
+    ],
+    "Graves": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Gwen": [
+      "ad_damage",
+      "fighter",
+      "split_push"
+    ],
+    "Hecarim": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Heimerdinger": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Hwei": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Illaoi": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Irelia": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Ivern": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Janna": [
+      "ap_damage",
+      "enchanter",
+      "mage",
+      "peel",
+      "support"
+    ],
+    "Jarvan IV": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Jax": [
+      "ad_damage",
+      "fighter",
+      "split_push"
+    ],
+    "Jayce": [
+      "ad_damage",
+      "fighter",
+      "marksman",
+      "poke"
+    ],
+    "Jhin": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Jinx": [
+      "ad_damage",
+      "marksman",
+      "scaling"
+    ],
+    "K'Sante": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Kai'Sa": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Kalista": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Karma": [
+      "ap_damage",
+      "enchanter",
+      "mage",
+      "peel",
+      "support"
+    ],
+    "Karthus": [
+      "ap_damage",
+      "mage"
+    ],
+    "Kassadin": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "mage",
+      "scaling"
+    ],
+    "Katarina": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "mage"
+    ],
+    "Kayle": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman",
+      "scaling"
+    ],
+    "Kayn": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Kennen": [
+      "ap_damage",
+      "mage"
+    ],
+    "Kha'Zix": [
+      "ad_damage",
+      "assassin"
+    ],
+    "Kindred": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Kled": [
+      "ad_damage",
+      "fighter"
+    ],
+    "Kog'Maw": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman",
+      "scaling"
+    ],
+    "LeBlanc": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "mage"
+    ],
+    "Lee Sin": [
+      "ad_damage",
+      "assassin",
+      "early_game",
+      "fighter"
+    ],
+    "Leona": [
+      "ap_damage",
+      "cc",
+      "engage",
+      "support",
+      "tank"
+    ],
+    "Lillia": [
+      "ad_damage",
+      "ap_damage",
+      "fighter",
+      "mage"
+    ],
+    "Lissandra": [
+      "ap_damage",
+      "cc",
+      "mage"
+    ],
+    "Lucian": [
+      "ad_damage",
+      "assassin",
+      "early_game",
+      "marksman"
+    ],
+    "Lulu": [
+      "ap_damage",
+      "enchanter",
+      "mage",
+      "peel",
+      "support"
+    ],
+    "Lux": [
+      "ap_damage",
+      "mage",
+      "poke",
+      "support"
+    ],
+    "Malphite": [
+      "ap_damage",
+      "engage",
+      "mage",
+      "tank"
+    ],
+    "Malzahar": [
+      "ap_damage",
+      "mage"
+    ],
+    "Maokai": [
+      "ap_damage",
+      "cc",
+      "healing",
+      "support",
+      "tank"
+    ],
+    "Master Yi": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Mel": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Milio": [
+      "ap_damage",
+      "enchanter",
+      "mage",
+      "peel",
+      "support"
+    ],
+    "Miss Fortune": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Mordekaiser": [
+      "ad_damage",
+      "ap_damage",
+      "fighter",
+      "mage"
+    ],
+    "Morgana": [
+      "ap_damage",
+      "cc",
+      "mage",
+      "support"
+    ],
+    "Naafiri": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Nami": [
+      "ap_damage",
+      "enchanter",
+      "mage",
+      "peel",
+      "support"
+    ],
+    "Nasus": [
+      "ad_damage",
+      "fighter",
+      "split_push",
+      "tank"
+    ],
+    "Nautilus": [
+      "ap_damage",
+      "cc",
+      "engage",
+      "support",
+      "tank"
+    ],
+    "Neeko": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Nidalee": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "early_game",
+      "mage",
+      "poke"
+    ],
+    "Nilah": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Nocturne": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Nunu & Willump": [
+      "ap_damage",
+      "mage",
+      "tank"
+    ],
+    "Olaf": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Orianna": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Ornn": [
+      "cc",
+      "engage",
+      "tank"
+    ],
+    "Pantheon": [
+      "ad_damage",
+      "assassin",
+      "early_game",
+      "fighter"
+    ],
+    "Poppy": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Pyke": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "support"
+    ],
+    "Qiyana": [
+      "ad_damage",
+      "assassin"
+    ],
+    "Quinn": [
+      "ad_damage",
+      "assassin",
+      "marksman"
+    ],
+    "Rakan": [
+      "ap_damage",
+      "engage",
+      "support"
+    ],
+    "Rammus": [
+      "ap_damage",
+      "tank"
+    ],
+    "Rek'Sai": [
+      "ad_damage",
+      "early_game",
+      "fighter",
+      "tank"
+    ],
+    "Rell": [
+      "ap_damage",
+      "cc",
+      "engage",
+      "support",
+      "tank"
+    ],
+    "Renata Glasc": [
+      "ap_damage",
+      "enchanter",
+      "mage",
+      "peel",
+      "support"
+    ],
+    "Renekton": [
+      "ad_damage",
+      "early_game",
+      "fighter",
+      "tank"
+    ],
+    "Rengar": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Riven": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Rumble": [
+      "ad_damage",
+      "ap_damage",
+      "fighter",
+      "mage"
+    ],
+    "Ryze": [
+      "ap_damage",
+      "mage"
+    ],
+    "Samira": [
+      "ad_damage",
+      "assassin",
+      "marksman"
+    ],
+    "Sejuani": [
+      "ap_damage",
+      "cc",
+      "engage",
+      "tank"
+    ],
+    "Senna": [
+      "ad_damage",
+      "ap_damage",
+      "marksman",
+      "scaling",
+      "support"
+    ],
+    "Seraphine": [
+      "ap_damage",
+      "enchanter",
+      "mage",
+      "support"
+    ],
+    "Sett": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Shaco": [
+      "ad_damage",
+      "assassin"
+    ],
+    "Shen": [
+      "tank"
+    ],
+    "Shyvana": [
+      "ad_damage",
+      "ap_damage",
+      "fighter",
+      "mage"
+    ],
+    "Singed": [
+      "ap_damage",
+      "mage",
+      "tank"
+    ],
+    "Sion": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Sivir": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Skarner": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Smolder": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman",
+      "scaling"
+    ],
+    "Sona": [
+      "ap_damage",
+      "enchanter",
+      "healing",
+      "mage",
+      "peel",
+      "support"
+    ],
+    "Soraka": [
+      "ap_damage",
+      "enchanter",
+      "healing",
+      "mage",
+      "support"
+    ],
+    "Swain": [
+      "ap_damage",
+      "drain_tank",
+      "healing",
+      "mage",
+      "support"
+    ],
+    "Sylas": [
+      "ad_damage",
+      "ap_damage",
+      "assassin",
+      "healing",
+      "mage"
+    ],
+    "Syndra": [
+      "ap_damage",
+      "mage"
+    ],
+    "Tahm Kench": [
+      "ap_damage",
+      "support",
+      "tank"
+    ],
+    "Taliyah": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Talon": [
+      "ad_damage",
+      "assassin"
+    ],
+    "Taric": [
+      "ap_damage",
+      "support",
+      "tank"
+    ],
+    "Teemo": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Thresh": [
+      "ap_damage",
+      "peel",
+      "support",
+      "tank"
+    ],
+    "Tristana": [
+      "ad_damage",
+      "assassin",
+      "marksman"
+    ],
+    "Trundle": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Tryndamere": [
+      "ad_damage",
+      "assassin",
+      "fighter",
+      "split_push"
+    ],
+    "Twisted Fate": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman"
+    ],
+    "Twitch": [
+      "ad_damage",
+      "assassin",
+      "marksman"
+    ],
+    "Udyr": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Urgot": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Varus": [
+      "ad_damage",
+      "ap_damage",
+      "mage",
+      "marksman",
+      "poke"
+    ],
+    "Vayne": [
+      "ad_damage",
+      "assassin",
+      "marksman",
+      "scaling"
+    ],
+    "Veigar": [
+      "ap_damage",
+      "mage",
+      "scaling"
+    ],
+    "Vel'Koz": [
+      "ap_damage",
+      "mage",
+      "poke",
+      "support"
+    ],
+    "Vex": [
+      "ap_damage",
+      "mage"
+    ],
+    "Vi": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Viego": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Viktor": [
+      "ap_damage",
+      "mage"
+    ],
+    "Vladimir": [
+      "ad_damage",
+      "ap_damage",
+      "drain_tank",
+      "fighter",
+      "healing",
+      "mage"
+    ],
+    "Volibear": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Warwick": [
+      "ad_damage",
+      "drain_tank",
+      "fighter",
+      "healing",
+      "tank"
+    ],
+    "Wukong": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Xayah": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Xerath": [
+      "ap_damage",
+      "mage",
+      "poke",
+      "support"
+    ],
+    "Xin Zhao": [
+      "ad_damage",
+      "fighter",
+      "tank"
+    ],
+    "Yasuo": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Yone": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Yorick": [
+      "ad_damage",
+      "fighter",
+      "split_push",
+      "tank"
+    ],
+    "Yunara": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Yuumi": [
+      "ap_damage",
+      "enchanter",
+      "healing",
+      "mage",
+      "support"
+    ],
+    "Zaahen": [
+      "ad_damage",
+      "assassin",
+      "fighter"
+    ],
+    "Zac": [
+      "ad_damage",
+      "ap_damage",
+      "fighter",
+      "tank"
+    ],
+    "Zed": [
+      "ad_damage",
+      "assassin"
+    ],
+    "Zeri": [
+      "ad_damage",
+      "marksman"
+    ],
+    "Ziggs": [
+      "ap_damage",
+      "mage",
+      "poke"
+    ],
+    "Zilean": [
+      "ap_damage",
+      "mage",
+      "support"
+    ],
+    "Zoe": [
+      "ap_damage",
+      "mage",
+      "poke"
+    ],
+    "Zyra": [
+      "ap_damage",
+      "mage",
+      "support"
+    ]
+  }
+}

@@ -5,29 +5,15 @@ import {
   type SearchOptions,
 } from "@/lib/similarity-search";
 import { cachedRiotAPI } from "@/lib/cache";
+import {
+  buildRegionalCandidates,
+  getRegionConfig,
+  getRegionFromPlatform,
+  getRegionFromRequest,
+  type Region,
+} from "@/lib/regions";
 import { RiotAPIError } from "@/lib/riot-api";
 import type { MatchDto, MatchTimelineDto } from "@/lib/types/riot";
-
-const PLATFORM_TO_REGION: Record<string, string> = {
-  na1: "americas",
-  br1: "americas",
-  la1: "americas",
-  la2: "americas",
-  oc1: "americas",
-  euw1: "europe",
-  eun1: "europe",
-  tr1: "europe",
-  ru: "europe",
-  kr: "asia",
-  jp1: "asia",
-  ph2: "sea",
-  sg2: "sea",
-  th2: "sea",
-  tw2: "sea",
-  vn2: "sea",
-};
-
-const FALLBACK_REGIONS = ["americas", "europe", "asia", "sea"];
 
 type SimilarRouteBody = {
   matchId?: string;
@@ -36,21 +22,22 @@ type SimilarRouteBody = {
   options?: SearchOptions;
 };
 
-function getRegionCandidates(matchId: string): string[] {
+function getRegionCandidates(matchId: string, preferredRegion: Region): string[] {
   const platform = matchId.split("_")[0]?.toLowerCase() ?? "";
-  const inferred = PLATFORM_TO_REGION[platform];
+  const inferredRegion = getRegionFromPlatform(platform);
+  const inferred = inferredRegion ? getRegionConfig(inferredRegion).regional : undefined;
 
-  if (!inferred) {
-    return [...FALLBACK_REGIONS];
-  }
-
-  return [inferred, ...FALLBACK_REGIONS.filter((region) => region !== inferred)];
+  return buildRegionalCandidates({
+    preferredRegion,
+    inferredRegional: inferred,
+  });
 }
 
 async function fetchMatchWithRegionFallback(
   matchId: string,
+  preferredRegion: Region,
 ): Promise<{ match: MatchDto; timeline: MatchTimelineDto }> {
-  for (const region of getRegionCandidates(matchId)) {
+  for (const region of getRegionCandidates(matchId, preferredRegion)) {
     try {
       const [match, timeline] = await Promise.all([
         cachedRiotAPI.getMatch(matchId, region),
@@ -76,6 +63,7 @@ async function fetchMatchWithRegionFallback(
 
 export async function POST(request: Request) {
   try {
+    const selectedRegion = getRegionFromRequest(request);
     const body = (await request.json()) as SimilarRouteBody;
     const matchId = body.matchId?.trim();
     const playerPuuid = body.playerPuuid?.trim();
@@ -95,7 +83,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { match, timeline } = await fetchMatchWithRegionFallback(matchId);
+    const { match, timeline } = await fetchMatchWithRegionFallback(matchId, selectedRegion);
     const result = await similaritySearchEngine.search(
       match,
       timeline,

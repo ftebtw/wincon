@@ -8,11 +8,18 @@ import {
   sql,
 } from "drizzle-orm";
 
-import { cachedRiotAPI, type CachedRiotAPI } from "@/lib/cache";
+import { CachedRiotAPI, inMemoryCache } from "@/lib/cache";
 import { classifyBothComps } from "@/lib/comp-classifier";
 import { getLatestVersion } from "@/lib/data-dragon";
 import { db, schema } from "@/lib/db";
 import { gameStateEncoder } from "@/lib/game-state-encoder";
+import {
+  getRegionConfig,
+  getRegionFromPlatform,
+  type Region,
+} from "@/lib/regions";
+import { backgroundRiotRateLimiter } from "@/lib/rate-limiter";
+import { RiotAPIClient } from "@/lib/riot-api";
 import { RiotAPIError } from "@/lib/riot-api";
 import type {
   HighEloTier,
@@ -22,26 +29,10 @@ import type {
   ParticipantDto,
 } from "@/lib/types/riot";
 
-const COLLECTION_PLATFORMS = ["na1", "euw1", "kr"] as const;
-
-const PLATFORM_TO_REGION: Record<string, string> = {
-  na1: "americas",
-  br1: "americas",
-  la1: "americas",
-  la2: "americas",
-  oc1: "americas",
-  euw1: "europe",
-  eun1: "europe",
-  tr1: "europe",
-  ru: "europe",
-  kr: "asia",
-  jp1: "asia",
-  ph2: "sea",
-  sg2: "sea",
-  th2: "sea",
-  tw2: "sea",
-  vn2: "sea",
-};
+const COLLECTION_REGIONS: Region[] = ["NA", "EUW", "KR"];
+const COLLECTION_PLATFORMS = COLLECTION_REGIONS.map(
+  (region) => getRegionConfig(region).platform,
+) as string[];
 
 const ROLE_NORMALIZATION: Record<string, string> = {
   TOP: "TOP",
@@ -109,7 +100,8 @@ function parsePatchFromGameVersion(gameVersion: string): string {
 
 function inferRegionFromMatchId(matchId: string): string {
   const platform = matchId.split("_")[0]?.toLowerCase() ?? "";
-  return PLATFORM_TO_REGION[platform] ?? "americas";
+  const region = getRegionFromPlatform(platform);
+  return region ? getRegionConfig(region).regional : "americas";
 }
 
 function normalizeRole(rawRole: string): string {
@@ -198,8 +190,14 @@ export class DataCollector {
   private onlyCurrentPatch = false;
   private currentPatch = "";
 
-  constructor(riotAPI: CachedRiotAPI = cachedRiotAPI, options?: { minDelayMs?: number }) {
-    this.riotAPI = riotAPI;
+  constructor(riotAPI?: CachedRiotAPI, options?: { minDelayMs?: number }) {
+    this.riotAPI =
+      riotAPI ??
+      new CachedRiotAPI(
+        new RiotAPIClient(),
+        inMemoryCache,
+        backgroundRiotRateLimiter,
+      );
     this.minDelayMs = options?.minDelayMs ?? 200;
   }
 
@@ -495,9 +493,10 @@ export class DataCollector {
 
         if (summoner?.puuid) {
           puuids.add(summoner.puuid);
+          const region = getRegionFromPlatform(platform);
           this.playerRegionByPuuid.set(
             summoner.puuid,
-            PLATFORM_TO_REGION[platform] ?? "americas",
+            region ? getRegionConfig(region).regional : "americas",
           );
         }
 

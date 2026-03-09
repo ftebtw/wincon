@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { patchTracker } from "@/lib/patch-tracker";
 
 function isAuthorized(request: Request): boolean {
@@ -42,7 +43,11 @@ export async function GET(request: Request) {
     const { isNew, version, previousVersion } = await patchTracker.detectNewPatch();
 
     if (isNew) {
-      console.log(`NEW PATCH DETECTED: ${previousVersion} -> ${version}`);
+      logger.info("New patch detected.", {
+        endpoint: "/api/cron/patch-check",
+        previousVersion,
+        version,
+      });
 
       const patchInfo = await patchTracker.fetchPatchNotes(version);
 
@@ -111,7 +116,10 @@ export async function GET(request: Request) {
       currentVersion: version,
     });
   } catch (error) {
-    console.error("[PatchCheckCron] Failed:", error);
+    logger.error("Patch check cron failed.", {
+      endpoint: "/api/cron/patch-check",
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     if (jobId !== null) {
       await db

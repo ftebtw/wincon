@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { progressTracker } from "@/lib/progress-tracker";
 
 function isAuthorized(request: Request): boolean {
@@ -64,7 +65,11 @@ export async function GET(request: Request) {
         computed += 1;
       } catch (error) {
         failed += 1;
-        console.error(`[ComputeProgressCron] Failed for ${player.puuid}:`, error);
+        logger.error("Progress compute failed for player.", {
+          endpoint: "/api/cron/compute-progress",
+          puuid: player.puuid,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -87,7 +92,10 @@ export async function GET(request: Request) {
 
     return Response.json(report);
   } catch (error) {
-    console.error("[ComputeProgressCron] Failed:", error);
+    logger.error("Progress compute cron failed.", {
+      endpoint: "/api/cron/compute-progress",
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     if (jobId !== null) {
       await db

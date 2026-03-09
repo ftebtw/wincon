@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { ProDataImporter } from "@/lib/pro-data-importer";
 
 function isAuthorized(request: Request): boolean {
@@ -61,7 +62,10 @@ export async function GET(request: Request) {
 
     return Response.json(report);
   } catch (error) {
-    console.error("[CronProImport] Failed:", error);
+    logger.error("Pro data import cron failed.", {
+      endpoint: "/api/cron/import-pro-data",
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     if (jobId !== null) {
       await db

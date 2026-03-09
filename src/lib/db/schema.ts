@@ -139,14 +139,19 @@ export const aiAnalyses = pgTable(
   "ai_analyses",
   {
     id: serial("id").primaryKey(),
-    matchId: text("match_id")
-      .notNull()
-      .references(() => matches.matchId, { onDelete: "cascade" }),
+    matchId: text("match_id").references(() => matches.matchId, {
+      onDelete: "cascade",
+    }),
     puuid: text("puuid").notNull(),
     analysisType: text("analysis_type").notNull(),
     analysisJson: jsonb("analysis_json").notNull(),
     coachingText: text("coaching_text").notNull(),
     modelVersion: text("model_version").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    estimatedCost: decimal("estimated_cost", { precision: 10, scale: 6 })
+      .notNull()
+      .default("0"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -158,6 +163,7 @@ export const aiAnalyses = pgTable(
       table.analysisType,
     ),
     index("idx_ai_analyses_lookup").on(table.matchId, table.puuid),
+    index("idx_ai_analyses_cost_rollup").on(table.createdAt, table.analysisType),
   ],
 );
 

@@ -4,6 +4,16 @@ import { NextResponse } from "next/server";
 import { cachedRiotAPI } from "@/lib/cache";
 import { db, schema } from "@/lib/db";
 import { opggClient } from "@/lib/opgg-mcp";
+import {
+  buildPlatformCandidates,
+  buildRegionalCandidates,
+  getRegionConfig,
+  getRegionFromPlatform,
+  getRegionFromRequest,
+  inferPlatformFromTagLine,
+  inferRegionFromTagLine,
+  type Region,
+} from "@/lib/regions";
 import { RiotAPIError } from "@/lib/riot-api";
 import type { MatchSummary, PlayerLookupResponse } from "@/lib/types/player";
 import type { AccountDto, LeagueEntryDto, MatchDto, ParticipantDto, SummonerDto } from "@/lib/types/riot";
@@ -13,28 +23,6 @@ type PlayerRouteContext = {
     riotId: string;
   }>;
 };
-
-const PLATFORM_TO_REGION: Record<string, string> = {
-  na1: "americas",
-  br1: "americas",
-  la1: "americas",
-  la2: "americas",
-  oc1: "americas",
-  euw1: "europe",
-  eun1: "europe",
-  tr1: "europe",
-  ru: "europe",
-  kr: "asia",
-  jp1: "asia",
-  ph2: "sea",
-  sg2: "sea",
-  th2: "sea",
-  tw2: "sea",
-  vn2: "sea",
-};
-
-const ALL_REGIONS = ["americas", "europe", "asia", "sea"] as const;
-const ALL_PLATFORMS = Object.keys(PLATFORM_TO_REGION);
 
 function parseRiotIdSlug(riotIdSlug: string): { gameName: string; tagLine: string } | null {
   const decoded = decodeURIComponent(riotIdSlug);
@@ -54,37 +42,24 @@ function parseRiotIdSlug(riotIdSlug: string): { gameName: string; tagLine: strin
   return { gameName, tagLine };
 }
 
-function resolvePlatform(tagLine: string): string | undefined {
-  const normalizedTag = tagLine.toLowerCase();
-  return normalizedTag in PLATFORM_TO_REGION ? normalizedTag : undefined;
+function getRegionCandidates(tagLine: string, preferredRegion: Region): string[] {
+  const inferredRegion = inferRegionFromTagLine(tagLine);
+  const inferredRegional = inferredRegion
+    ? getRegionConfig(inferredRegion).regional
+    : undefined;
+
+  return buildRegionalCandidates({
+    preferredRegion,
+    inferredRegional,
+  });
 }
 
-function getRegionCandidates(tagLine: string): string[] {
-  const inferredPlatform = resolvePlatform(tagLine);
-  const inferredRegion = inferredPlatform ? PLATFORM_TO_REGION[inferredPlatform] : undefined;
-
-  if (!inferredRegion) {
-    return [...ALL_REGIONS];
-  }
-
-  return [inferredRegion, ...ALL_REGIONS.filter((region) => region !== inferredRegion)];
-}
-
-function getPlatformCandidates(tagLine: string): string[] {
-  const inferredPlatform = resolvePlatform(tagLine);
-
-  if (!inferredPlatform) {
-    return [...ALL_PLATFORMS];
-  }
-
-  return [
+function getPlatformCandidates(tagLine: string, preferredRegion: Region): string[] {
+  const inferredPlatform = inferPlatformFromTagLine(tagLine);
+  return buildPlatformCandidates({
+    preferredRegion,
     inferredPlatform,
-    ...ALL_PLATFORMS.filter((platform) => platform !== inferredPlatform),
-  ];
-}
-
-function getRegionForPlatform(platform: string): string {
-  return PLATFORM_TO_REGION[platform] ?? "americas";
+  });
 }
 
 function toOpggRegion(tagLine: string): string {
@@ -230,8 +205,9 @@ function buildMatchSummary(match: MatchDto, puuid: string): MatchSummary | null 
 async function fetchAccountWithFallback(
   gameName: string,
   tagLine: string,
+  preferredRegion: Region,
 ): Promise<{ account: AccountDto; region: string }> {
-  for (const region of getRegionCandidates(tagLine)) {
+  for (const region of getRegionCandidates(tagLine, preferredRegion)) {
     try {
       const account = await cachedRiotAPI.getAccountByRiotId(gameName, tagLine, region);
       return { account, region };
@@ -254,11 +230,18 @@ async function fetchAccountWithFallback(
 async function fetchSummonerWithFallback(
   puuid: string,
   tagLine: string,
+  preferredRegion: Region,
 ): Promise<{ summoner: SummonerDto; platform: string; region: string }> {
-  for (const platform of getPlatformCandidates(tagLine)) {
+  for (const platform of getPlatformCandidates(tagLine, preferredRegion)) {
     try {
       const summoner = await cachedRiotAPI.getSummonerByPuuid(puuid, platform);
-      return { summoner, platform, region: getRegionForPlatform(platform) };
+      const region =
+        getRegionFromPlatform(platform) ?? preferredRegion;
+      return {
+        summoner,
+        platform,
+        region: getRegionConfig(region).regional,
+      };
     } catch (error) {
       if (error instanceof RiotAPIError && error.status === 404) {
         continue;
@@ -426,6 +409,7 @@ async function persistPlayerSnapshot(params: {
 export async function GET(request: Request, { params }: PlayerRouteContext) {
   const { riotId } = await params;
   const url = new URL(request.url);
+  const selectedRegion = getRegionFromRequest(request);
   const forceRefresh = url.searchParams.get("refresh") === "1";
   const parsedRiotId = parseRiotIdSlug(riotId);
 
@@ -439,7 +423,7 @@ export async function GET(request: Request, { params }: PlayerRouteContext) {
   const { gameName, tagLine } = parsedRiotId;
 
   try {
-    const { account } = await fetchAccountWithFallback(gameName, tagLine);
+    const { account } = await fetchAccountWithFallback(gameName, tagLine, selectedRegion);
     if (forceRefresh) {
       await cachedRiotAPI.invalidatePlayer(account.puuid);
     }
@@ -447,6 +431,7 @@ export async function GET(request: Request, { params }: PlayerRouteContext) {
     const { summoner, platform, region } = await fetchSummonerWithFallback(
       account.puuid,
       tagLine,
+      selectedRegion,
     );
 
     const [rankedStats, matchIds, activeGame] = await Promise.all([

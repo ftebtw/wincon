@@ -11,6 +11,7 @@ import {
 import { db, schema } from "@/lib/db";
 import { abilityDataService } from "@/lib/ability-data";
 import { aiCoach } from "@/lib/ai-coach";
+import { aiRateLimiter } from "@/lib/ai-rate-limiter";
 import { playByPlayAnalyzer } from "@/lib/play-by-play";
 import { rankBenchmarkService } from "@/lib/rank-benchmarks";
 import { RiotAPIError } from "@/lib/riot-api";
@@ -18,6 +19,13 @@ import {
   similaritySearchEngine,
   type SimilarGameResult,
 } from "@/lib/similarity-search";
+import {
+  buildRegionalCandidates,
+  getRegionConfig,
+  getRegionFromPlatform,
+  getRegionFromRequest,
+  type Region,
+} from "@/lib/regions";
 import { wpaEngine } from "@/lib/wpa-engine";
 import { compactMatchForLLM, formatForPrompt } from "@/lib/match-compactor";
 import type { MatchAnalysisOutput } from "@/lib/types/analysis";
@@ -30,26 +38,9 @@ type AnalysisRouteContext = {
   }>;
 };
 
-const PLATFORM_TO_REGION: Record<string, string> = {
-  na1: "americas",
-  br1: "americas",
-  la1: "americas",
-  la2: "americas",
-  oc1: "americas",
-  euw1: "europe",
-  eun1: "europe",
-  tr1: "europe",
-  ru: "europe",
-  kr: "asia",
-  jp1: "asia",
-  ph2: "sea",
-  sg2: "sea",
-  th2: "sea",
-  tw2: "sea",
-  vn2: "sea",
-};
-
-const FALLBACK_REGIONS = ["americas", "europe", "asia", "sea"];
+// Option A timeout handling for serverless AI calls.
+// TODO: migrate to streaming responses for better UX.
+export const maxDuration = 60;
 
 function parsePatchFromGameVersion(gameVersion: string): string {
   const [major, minor] = gameVersion.split(".");
@@ -60,15 +51,15 @@ function parsePatchFromGameVersion(gameVersion: string): string {
   return `${major}.${minor}`;
 }
 
-function getRegionCandidates(matchId: string): string[] {
+function getRegionCandidates(matchId: string, preferredRegion: Region): string[] {
   const platform = matchId.split("_")[0]?.toLowerCase() ?? "";
-  const inferred = PLATFORM_TO_REGION[platform];
+  const inferredRegion = getRegionFromPlatform(platform);
+  const inferred = inferredRegion ? getRegionConfig(inferredRegion).regional : undefined;
 
-  if (!inferred) {
-    return [...FALLBACK_REGIONS];
-  }
-
-  return [inferred, ...FALLBACK_REGIONS.filter((region) => region !== inferred)];
+  return buildRegionalCandidates({
+    preferredRegion,
+    inferredRegional: inferred,
+  });
 }
 
 function extractPlayerRank(rawMatch: MatchDto, playerPuuid: string): string | undefined {
@@ -281,8 +272,9 @@ async function getPlayerSoloTier(puuid: string): Promise<string> {
 
 async function fetchMatchWithRegionFallback(
   matchId: string,
+  preferredRegion: Region,
 ): Promise<{ match: MatchDto; timeline: MatchTimelineDto }> {
-  for (const region of getRegionCandidates(matchId)) {
+  for (const region of getRegionCandidates(matchId, preferredRegion)) {
     try {
       const [match, timeline] = await Promise.all([
         cachedRiotAPI.getMatch(matchId, region),
@@ -383,6 +375,7 @@ async function ensureMatchExists(match: MatchDto): Promise<void> {
 export async function GET(request: Request, { params }: AnalysisRouteContext) {
   const { matchId } = await params;
   const url = new URL(request.url);
+  const selectedRegion = getRegionFromRequest(request);
   const playerPuuid = url.searchParams.get("player");
 
   if (!playerPuuid) {
@@ -398,7 +391,18 @@ export async function GET(request: Request, { params }: AnalysisRouteContext) {
       return NextResponse.json(cached);
     }
 
-    const { match, timeline } = await fetchMatchWithRegionFallback(matchId);
+    const rateLimit = aiRateLimiter.consume(request, { userId: playerPuuid });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: rateLimit.message,
+          resetAt: rateLimit.resetAt,
+        },
+        { status: 429 },
+      );
+    }
+
+    const { match, timeline } = await fetchMatchWithRegionFallback(matchId, selectedRegion);
     const playerParticipant = match.info.participants.find(
       (participant) => participant.puuid === playerPuuid,
     );

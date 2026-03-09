@@ -10,7 +10,8 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
-    "backtest": "tsx scripts/run-backtest.ts"
+    "backtest": "tsx scripts/run-backtest.ts",
+    "generate:champion-tags": "tsx scripts/generate-champion-tags.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

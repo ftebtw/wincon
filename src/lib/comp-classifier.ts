@@ -1,3 +1,4 @@
+import championTagsFile from "@/data/champion-tags.json";
 import { getChampionByName } from "@/lib/data-dragon";
 import type { RiotMatch } from "@/lib/types/riot";
 
@@ -34,192 +35,117 @@ export interface TeamCompClassification {
   tags: CompTag[];
 }
 
-const AP_ASSASSINS = new Set([
-  "Akali",
-  "Diana",
-  "Ekko",
-  "Evelynn",
-  "Fizz",
-  "Kassadin",
-  "Katarina",
-]);
+type ChampionTagsFile = {
+  lastVerifiedPatch: string;
+  generatedAt: string;
+  champions: Record<string, string[]>;
+};
 
-const AP_TANKS = new Set([
-  "Amumu",
-  "Cho'Gath",
-  "Dr. Mundo",
-  "Gragas",
-  "Maokai",
-  "Rammus",
-  "Sejuani",
-  "Zac",
-]);
-
-const AP_SUPPORTS = new Set([
-  "Karma",
-  "Lulu",
-  "Milio",
-  "Nami",
-  "Renata Glasc",
-  "Seraphine",
-  "Sona",
-  "Soraka",
-  "Yuumi",
-  "Zilean",
-]);
-
-const AD_SUPPORTS = new Set(["Pyke", "Senna"]);
-
-const HEALING_HEAVY_CHAMPIONS = new Set([
-  "Soraka",
-  "Yuumi",
-  "Sona",
-  "Aatrox",
-  "Dr. Mundo",
-  "Vladimir",
-  "Sylas",
-  "Warwick",
-  "Fiddlesticks",
-  "Swain",
-  "Maokai",
-]);
-
-const POKE_INDICATORS = new Set([
-  "Xerath",
-  "Lux",
-  "Jayce",
-  "Varus",
-  "Nidalee",
-  "Ziggs",
-  "Zoe",
-  "Vel'Koz",
-]);
-
-const ENGAGE_INDICATORS = new Set([
-  "Malphite",
-  "Leona",
-  "Nautilus",
-  "Amumu",
-  "Ornn",
-  "Sejuani",
-  "Rakan",
-]);
-
-const SPLIT_PUSH_INDICATORS = new Set([
-  "Fiora",
-  "Tryndamere",
-  "Jax",
-  "Camille",
-  "Yorick",
-  "Nasus",
-]);
-
-const PEEL_INDICATORS = new Set([
-  "Lulu",
-  "Janna",
-  "Braum",
-  "Thresh",
-  "Karma",
-  "Renata Glasc",
-]);
-
-const SCALING_INDICATORS = new Set([
-  "Kayle",
-  "Kassadin",
-  "Jinx",
-  "Vayne",
-  "Kog'Maw",
-  "Veigar",
-  "Senna",
-]);
-
-const EARLY_GAME_INDICATORS = new Set([
-  "Lee Sin",
-  "Elise",
-  "Renekton",
-  "Pantheon",
-  "Draven",
-  "Lucian",
-  "Rek'Sai",
-  "Nidalee",
-]);
-
-const CC_HEAVY_INDICATORS = new Set([
-  "Amumu",
-  "Leona",
-  "Nautilus",
-  "Sejuani",
-  "Rell",
-  "Maokai",
-  "Lissandra",
-  "Ornn",
-]);
+const championTags = championTagsFile as ChampionTagsFile;
+const warnedUnknownChampions = new Set<string>();
 
 function normalizeChampionName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function setHasChampion(set: Set<string>, championName: string): boolean {
-  const normalizedChampion = normalizeChampionName(championName);
-  for (const candidate of set) {
-    if (normalizeChampionName(candidate) === normalizedChampion) {
-      return true;
+function normalizeTag(tag: string): string {
+  return tag.toLowerCase().replace(/\s+/g, "_");
+}
+
+function parsePatchVersion(patch: string): { major: number; minor: number } | null {
+  const [majorRaw, minorRaw] = patch.split(".");
+  const major = Number(majorRaw);
+  const minor = Number(minorRaw);
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) {
+    return null;
+  }
+  return { major, minor };
+}
+
+export function getChampionTagDatasetStatus(currentPatch: string): {
+  lastVerifiedPatch: string;
+  staleByPatches: number | null;
+  isStale: boolean;
+  warning: string | null;
+} {
+  const lastVerifiedPatch = championTags.lastVerifiedPatch ?? "unknown";
+  const current = parsePatchVersion(currentPatch);
+  const last = parsePatchVersion(lastVerifiedPatch);
+
+  if (!current || !last) {
+    return {
+      lastVerifiedPatch,
+      staleByPatches: null,
+      isStale: true,
+      warning:
+        "Champion tag dataset patch version is unknown. Regenerate champion-tags.json.",
+    };
+  }
+
+  const staleByPatches = Math.max(0, current.minor - last.minor);
+  const isStale = current.major !== last.major || staleByPatches > 1;
+  return {
+    lastVerifiedPatch,
+    staleByPatches,
+    isStale,
+    warning: isStale
+      ? `Champion tag dataset is ${staleByPatches} patch(es) behind (${lastVerifiedPatch} vs ${currentPatch}).`
+      : null,
+  };
+}
+
+function getCustomChampionTags(championName: string): string[] {
+  const normalizedName = normalizeChampionName(championName);
+  for (const [name, tags] of Object.entries(championTags.champions ?? {})) {
+    if (normalizeChampionName(name) === normalizedName) {
+      return tags.map(normalizeTag);
     }
   }
-
-  return false;
+  return [];
 }
 
-function countChampionsInSet(championNames: string[], set: Set<string>): number {
-  return championNames.reduce((count, championName) => {
-    return count + Number(setHasChampion(set, championName));
-  }, 0);
+async function resolveChampionTags(championName: string): Promise<string[]> {
+  const custom = getCustomChampionTags(championName);
+  const champion = await getChampionByName(championName);
+  const base = champion?.tags?.map(normalizeTag) ?? [];
+  const merged = Array.from(new Set([...base, ...custom]));
+
+  if (merged.length === 0 && !warnedUnknownChampions.has(championName)) {
+    warnedUnknownChampions.add(championName);
+    console.warn(
+      `[CompClassifier] Unknown champion encountered: ${championName}. Falling back to empty tag set.`,
+    );
+  }
+
+  return merged;
 }
 
-function inferDamageType(
-  championName: string,
-  championTags: string[],
-): "AP" | "AD" | "Mixed" {
-  if (setHasChampion(AP_ASSASSINS, championName)) {
+function hasChampionTag(tags: string[], target: string): boolean {
+  return tags.includes(target);
+}
+
+function inferDamageType(tags: string[]): "AP" | "AD" | "Mixed" {
+  if (hasChampionTag(tags, "ap_damage")) {
     return "AP";
   }
-
-  if (setHasChampion(AP_TANKS, championName)) {
-    return "AP";
-  }
-
-  if (setHasChampion(AP_SUPPORTS, championName)) {
-    return "AP";
-  }
-
-  if (setHasChampion(AD_SUPPORTS, championName)) {
+  if (hasChampionTag(tags, "ad_damage")) {
     return "AD";
   }
-
-  if (championTags.includes("Mage")) {
+  if (hasChampionTag(tags, "mage")) {
     return "AP";
   }
-
-  if (championTags.includes("Marksman")) {
+  if (hasChampionTag(tags, "marksman")) {
     return "AD";
   }
-
-  if (championTags.includes("Assassin")) {
+  if (hasChampionTag(tags, "assassin")) {
     return "AD";
   }
-
-  if (championTags.includes("Fighter")) {
+  if (hasChampionTag(tags, "fighter")) {
     return "AD";
   }
-
-  if (championTags.includes("Tank")) {
-    return "Mixed";
-  }
-
-  if (championTags.includes("Support")) {
+  if (hasChampionTag(tags, "support")) {
     return "AP";
   }
-
   return "Mixed";
 }
 
@@ -248,18 +174,13 @@ function buildTeamIdentity(tags: Set<CompTag>, primaryDamageType: "AP" | "AD" | 
   return `${strategy} with ${damageDescriptor}`;
 }
 
-export async function classifyTeamComp(
-  championNames: string[],
-): Promise<CompAnalysis> {
+export async function classifyTeamComp(championNames: string[]): Promise<CompAnalysis> {
   const uniqueChampionNames = championNames.filter(Boolean);
   const championDetails = await Promise.all(
-    uniqueChampionNames.map(async (championName) => {
-      const champion = await getChampionByName(championName);
-      return {
-        championName,
-        tags: champion?.tags ?? [],
-      };
-    }),
+    uniqueChampionNames.map(async (championName) => ({
+      championName,
+      tags: await resolveChampionTags(championName),
+    })),
   );
 
   let apDealers = 0;
@@ -268,26 +189,38 @@ export async function classifyTeamComp(
   let tankCount = 0;
   let bruiserCount = 0;
   let supportCount = 0;
+  let pokeCount = 0;
+  let engageCount = 0;
+  let splitPushCount = 0;
+  let scalingCount = 0;
+  let earlyGameCount = 0;
+  let healingCount = 0;
+  let peelCount = 0;
+  let ccCount = 0;
 
   for (const champion of championDetails) {
-    if (champion.tags.includes("Assassin")) {
-      assassinCount += 1;
+    if (hasChampionTag(champion.tags, "assassin")) assassinCount += 1;
+    if (hasChampionTag(champion.tags, "tank")) tankCount += 1;
+    if (hasChampionTag(champion.tags, "fighter")) bruiserCount += 1;
+    if (hasChampionTag(champion.tags, "support")) supportCount += 1;
+
+    if (hasChampionTag(champion.tags, "poke")) pokeCount += 1;
+    if (hasChampionTag(champion.tags, "engage")) engageCount += 1;
+    if (hasChampionTag(champion.tags, "split_push")) splitPushCount += 1;
+    if (hasChampionTag(champion.tags, "scaling")) scalingCount += 1;
+    if (hasChampionTag(champion.tags, "early_game")) earlyGameCount += 1;
+    if (
+      hasChampionTag(champion.tags, "healing") ||
+      hasChampionTag(champion.tags, "drain_tank")
+    ) {
+      healingCount += 1;
     }
-
-    if (champion.tags.includes("Tank")) {
-      tankCount += 1;
+    if (hasChampionTag(champion.tags, "peel") || hasChampionTag(champion.tags, "enchanter")) {
+      peelCount += 1;
     }
+    if (hasChampionTag(champion.tags, "cc")) ccCount += 1;
 
-    if (champion.tags.includes("Fighter")) {
-      bruiserCount += 1;
-    }
-
-    if (champion.tags.includes("Support")) {
-      supportCount += 1;
-    }
-
-    const damageType = inferDamageType(champion.championName, champion.tags);
-
+    const damageType = inferDamageType(champion.tags);
     if (damageType === "AP") {
       apDealers += 1;
     } else if (damageType === "AD") {
@@ -299,8 +232,8 @@ export async function classifyTeamComp(
   }
 
   const tags = new Set<CompTag>();
-
   let primaryDamageType: "AP" | "AD" | "Mixed" = "Mixed";
+
   if (apDealers >= 3) {
     tags.add("high_ap");
     primaryDamageType = "AP";
@@ -309,71 +242,21 @@ export async function classifyTeamComp(
     primaryDamageType = "AD";
   } else {
     tags.add("mixed_damage");
-    primaryDamageType = "Mixed";
   }
 
-  if (assassinCount >= 2) {
-    tags.add("assassin_heavy");
-  }
-
-  if (tankCount >= 2) {
-    tags.add("tank_heavy");
-  }
-
-  if (bruiserCount >= 3) {
-    tags.add("bruiser_heavy");
-  }
-
-  const pokeCount = countChampionsInSet(uniqueChampionNames, POKE_INDICATORS);
-  const engageCount = countChampionsInSet(uniqueChampionNames, ENGAGE_INDICATORS);
-  const splitPushCount = countChampionsInSet(
-    uniqueChampionNames,
-    SPLIT_PUSH_INDICATORS,
-  );
-  const scalingCount = countChampionsInSet(uniqueChampionNames, SCALING_INDICATORS);
-  const earlyGameCount = countChampionsInSet(
-    uniqueChampionNames,
-    EARLY_GAME_INDICATORS,
-  );
-  const healingCount = countChampionsInSet(
-    uniqueChampionNames,
-    HEALING_HEAVY_CHAMPIONS,
-  );
-  const peelCount = countChampionsInSet(uniqueChampionNames, PEEL_INDICATORS);
-  const ccCount = countChampionsInSet(uniqueChampionNames, CC_HEAVY_INDICATORS);
-
-  if (pokeCount >= 2) {
-    tags.add("poke_comp");
-  }
-
-  if (engageCount >= 2 || (engageCount >= 1 && tankCount >= 2)) {
-    tags.add("engage_comp");
-  }
-
-  if (splitPushCount >= 1) {
-    tags.add("split_push");
-  }
-
-  if (scalingCount >= 2) {
-    tags.add("scaling_comp");
-  }
-
-  if (earlyGameCount >= 2) {
-    tags.add("early_game");
-  }
-
-  if (healingCount >= 1) {
-    tags.add("healing_heavy");
-  }
-
-  if (ccCount >= 2 || tankCount + supportCount >= 3) {
-    tags.add("cc_heavy");
-  }
-
+  if (assassinCount >= 2) tags.add("assassin_heavy");
+  if (tankCount >= 2) tags.add("tank_heavy");
+  if (bruiserCount >= 3) tags.add("bruiser_heavy");
+  if (pokeCount >= 2) tags.add("poke_comp");
+  if (engageCount >= 2 || (engageCount >= 1 && tankCount >= 2)) tags.add("engage_comp");
+  if (splitPushCount >= 1) tags.add("split_push");
+  if (scalingCount >= 2) tags.add("scaling_comp");
+  if (earlyGameCount >= 2) tags.add("early_game");
+  if (healingCount >= 1) tags.add("healing_heavy");
+  if (ccCount >= 2 || tankCount + supportCount >= 3) tags.add("cc_heavy");
   if (peelCount >= 1 || (supportCount >= 2 && !tags.has("engage_comp"))) {
     tags.add("peel_heavy");
   }
-
   if (
     (tags.has("engage_comp") && (assassinCount >= 1 || bruiserCount >= 2)) ||
     (assassinCount >= 2 && engageCount >= 1)
@@ -396,7 +279,6 @@ export async function classifyBothComps(
     classifyTeamComp(allyChampions),
     classifyTeamComp(enemyChampions),
   ]);
-
   return { ally, enemy };
 }
 
@@ -418,51 +300,39 @@ export function getCompBasedBuildAdvice(
   if (enemyTags.includes("healing_heavy")) {
     advice.add("Build Grievous Wounds (Morellonomicon, Thornmail, etc.).");
   }
-
   if (enemyTags.includes("high_ap")) {
     advice.add("Prioritize Magic Resist items earlier.");
   }
-
   if (enemyTags.includes("high_ad")) {
     advice.add("Prioritize armor and anti-physical burst options.");
   }
-
   if (enemyTags.includes("assassin_heavy") && carry) {
     advice.add("Consider Guardian Angel or Zhonya's to survive burst.");
   }
-
   if (enemyTags.includes("cc_heavy")) {
     advice.add("Take tenacity options (Mercury's Treads, Cleanse, or QSS path).");
   }
-
   if (enemyTags.includes("poke_comp")) {
     advice.add("Value sustain and reliable engage tools against long-range poke.");
   }
-
   if (enemyTags.includes("dive_comp") && carry) {
     advice.add("Buy defensive positioning tools and hold cooldowns for self-peel.");
   }
-
   if (allyTags.includes("engage_comp") && carry) {
     advice.add("Build more damage - your team provides reliable engage and setup.");
   }
-
   if (!allyTags.includes("peel_heavy") && carry) {
     advice.add("Consider defensive boots and self-peel items due to low team peel.");
   }
-
   if (allyTags.includes("peel_heavy") && carry) {
     advice.add("You can greed more DPS since your team has strong peel.");
   }
-
   if (allyTags.includes("split_push") && roleUpper === "TOP") {
     advice.add("Favor side-lane dueling and tower pressure itemization.");
   }
-
   if (allyTags.includes("scaling_comp")) {
     advice.add("Itemize for consistent late-game fights and avoid early coin flips.");
   }
-
   if (advice.size === 0) {
     advice.add(`Build around ${champion}'s core spikes and adapt to live threats.`);
   }
@@ -470,16 +340,12 @@ export function getCompBasedBuildAdvice(
   return Array.from(advice);
 }
 
-// Compatibility helper used in early scaffolding.
-export async function classifyTeamCompositions(
-  match: RiotMatch,
-): Promise<TeamCompClassification[]> {
+export async function classifyTeamCompositions(match: RiotMatch): Promise<TeamCompClassification[]> {
   const groupedByTeam = match.info.participants.reduce<Record<number, string[]>>(
     (acc, participant) => {
       if (!acc[participant.teamId]) {
         acc[participant.teamId] = [];
       }
-
       acc[participant.teamId].push(participant.championName);
       return acc;
     },

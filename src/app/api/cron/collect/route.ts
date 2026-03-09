@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 
 import { DataCollector, getCurrentPatch } from "@/lib/data-collector";
 import { db, schema } from "@/lib/db";
+import { logger } from "@/lib/logger";
 
 const COLLECT_CONFIG = {
   tiers: ["CHALLENGER", "GRANDMASTER", "MASTER"] as const,
@@ -91,7 +92,10 @@ export async function GET(request: Request) {
 
     return Response.json(report);
   } catch (error) {
-    console.error("[CronCollect] Failed:", error);
+    logger.error("Cron collect failed.", {
+      endpoint: "/api/cron/collect",
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     if (jobId !== null) {
       await db

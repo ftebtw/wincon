@@ -1,18 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 
 import { Footer } from "@/components/Footer";
+import { RegionSelector } from "@/components/RegionSelector";
 import { SearchBar } from "@/components/SearchBar";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { db, schema } from "@/lib/db";
+import { parseRegion, REGION_COOKIE_NAME, type Region } from "@/lib/regions";
 
 import "./globals.css";
 
@@ -39,6 +35,10 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const initialRegion = (parseRegion(cookieStore.get(REGION_COOKIE_NAME)?.value) ??
+    "NA") as Region;
+
   let hasPBEChanges = false;
   if (process.env.DATABASE_URL) {
     try {
@@ -115,19 +115,7 @@ export default async function RootLayout({
                   ) : null}
                 </div>
 
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="justify-self-end">
-                      NA
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem>NA</DropdownMenuItem>
-                    <DropdownMenuItem>EUW</DropdownMenuItem>
-                    <DropdownMenuItem>EUNE</DropdownMenuItem>
-                    <DropdownMenuItem>KR</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <RegionSelector initialRegion={initialRegion} />
               </div>
             </header>
 

@@ -9,6 +9,11 @@ import type {
   MatchTimelineDto,
   SummonerDto,
 } from "@/lib/types/riot";
+import {
+  getRegionConfig,
+  type Region,
+} from "@/lib/regions";
+import { logger } from "@/lib/logger";
 
 export type MatchListOptions = {
   count?: number;
@@ -57,9 +62,11 @@ export class RiotAPIError extends Error {
 
 export class RiotAPIClient {
   private apiKey: string;
+  private defaultRegion: Region;
 
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, region: Region = "NA") {
     this.apiKey = apiKey ?? process.env.RIOT_API_KEY ?? "";
+    this.defaultRegion = region;
   }
 
   private platformBaseUrl(platform: string): string {
@@ -95,6 +102,14 @@ export class RiotAPIClient {
     if (response.status === 429 && retryAfter !== null) {
       message = `${message} Retry after ${retryAfter} seconds.`;
     }
+
+    logger.warn("Riot API request failed.", {
+      endpoint: "RiotAPIClient.request",
+      url,
+      status: response.status,
+      retryAfter,
+      message,
+    });
 
     return new RiotAPIError({
       status: response.status,
@@ -133,7 +148,7 @@ export class RiotAPIClient {
   async getAccountByRiotId(
     gameName: string,
     tagLine: string,
-    region = "americas",
+    region = getRegionConfig(this.defaultRegion).regional,
   ): Promise<AccountDto> {
     const url = `${this.regionalBaseUrl(region)}/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`;
     const response = await this.request<AccountDto>(url);
@@ -154,7 +169,7 @@ export class RiotAPIClient {
 
   async getRankedStats(
     summonerId: string,
-    platform = "na1",
+    platform = getRegionConfig(this.defaultRegion).platform,
   ): Promise<LeagueEntryDto[]> {
     const url = `${this.platformBaseUrl(platform)}/lol/league/v4/entries/by-summoner/${encodeURIComponent(summonerId)}`;
     const response = await this.request<LeagueEntryDto[]>(url);
@@ -164,7 +179,7 @@ export class RiotAPIClient {
   async getLeagueByTier(
     tier: HighEloTier,
     queue = "RANKED_SOLO_5x5",
-    platform = "na1",
+    platform = getRegionConfig(this.defaultRegion).platform,
   ): Promise<LeagueListDto> {
     const endpointByTier: Record<HighEloTier, string> = {
       CHALLENGER: "challengerleagues",
@@ -181,7 +196,7 @@ export class RiotAPIClient {
   async getMatchIds(
     puuid: string,
     options: MatchListOptions = {},
-    region = "americas",
+    region = getRegionConfig(this.defaultRegion).regional,
   ): Promise<string[]> {
     const params = new URLSearchParams();
     const count = Math.min(Math.max(options.count ?? 20, 1), 100);
@@ -213,7 +228,10 @@ export class RiotAPIClient {
     return response as string[];
   }
 
-  async getMatch(matchId: string, region = "americas"): Promise<MatchDto> {
+  async getMatch(
+    matchId: string,
+    region = getRegionConfig(this.defaultRegion).regional,
+  ): Promise<MatchDto> {
     const url = `${this.regionalBaseUrl(region)}/lol/match/v5/matches/${encodeURIComponent(matchId)}`;
     const response = await this.request<MatchDto>(url);
     return response as MatchDto;
@@ -221,7 +239,7 @@ export class RiotAPIClient {
 
   async getMatchTimeline(
     matchId: string,
-    region = "americas",
+    region = getRegionConfig(this.defaultRegion).regional,
   ): Promise<MatchTimelineDto> {
     const url = `${this.regionalBaseUrl(region)}/lol/match/v5/matches/${encodeURIComponent(matchId)}/timeline`;
     const response = await this.request<MatchTimelineDto>(url);
@@ -230,7 +248,7 @@ export class RiotAPIClient {
 
   async getActiveGame(
     puuid: string,
-    platform = "na1",
+    platform = getRegionConfig(this.defaultRegion).platform,
   ): Promise<CurrentGameInfoDto | null> {
     const url = `${this.platformBaseUrl(platform)}/lol/spectator/v5/active-games/by-summoner/${encodeURIComponent(puuid)}`;
     return this.request<CurrentGameInfoDto>(url, { returnNullOn404: true });
@@ -238,7 +256,7 @@ export class RiotAPIClient {
 
   async getChampionMastery(
     puuid: string,
-    platform = "na1",
+    platform = getRegionConfig(this.defaultRegion).platform,
   ): Promise<ChampionMasteryDto[]> {
     const url = `${this.platformBaseUrl(platform)}/lol/champion-mastery/v4/champion-masteries/by-puuid/${encodeURIComponent(puuid)}`;
     const response = await this.request<ChampionMasteryDto[]>(url);

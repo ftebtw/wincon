@@ -1,9 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
 import type { CompactedMatchData } from "@/lib/match-compactor";
 import { getItems } from "@/lib/data-dragon";
+import { logger } from "@/lib/logger";
 import { opggClient } from "@/lib/opgg-mcp";
 import { patchTracker } from "@/lib/patch-tracker";
 import type {
@@ -34,6 +35,41 @@ type ScoutCacheEntry = {
 };
 
 type JsonRecord = Record<string, unknown>;
+type ModelFamily = "opus" | "sonnet" | "unknown";
+
+type AIUsageSummary = {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+  model: string;
+};
+
+type AIResponseWithUsage = {
+  text: string;
+  usage: AIUsageSummary;
+};
+
+type ParsedResponseWithUsage<T> = {
+  parsed: T;
+  usage: AIUsageSummary;
+};
+
+type AnalysisLogParams = {
+  matchId?: string | null;
+  puuid?: string | null;
+  analysisType: string;
+  modelVersion: string;
+  coachingText: string;
+  analysisJson: unknown;
+  usage: AIUsageSummary;
+};
+
+class AICircuitBreakerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AICircuitBreakerError";
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -424,10 +460,12 @@ export class AICoach {
     prompt: string,
     maxTokens: number,
     model = MODEL_VERSION,
-  ): Promise<string> {
+  ): Promise<AIResponseWithUsage> {
     if (!this.client) {
       throw new Error("ANTHROPIC_API_KEY is not configured.");
     }
+
+    await this.assertSpendCircuitBreaker();
 
     for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt += 1) {
       try {
@@ -440,17 +478,29 @@ export class AICoach {
         );
 
         const usage = response.usage;
-        if (usage) {
-          const inputTokens =
-            typeof usage.input_tokens === "number" ? usage.input_tokens : "unknown";
-          const outputTokens =
-            typeof usage.output_tokens === "number" ? usage.output_tokens : "unknown";
-          console.log(
-            `[AICoach] Token usage model=${model} input=${inputTokens} output=${outputTokens}`,
-          );
-        }
+        const inputTokens =
+          usage && typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+        const outputTokens =
+          usage && typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
+        const estimatedCostUsd = this.estimateCallCostUsd(model, inputTokens, outputTokens);
 
-        return extractTextFromAnthropicContent(response.content);
+        logger.info("Anthropic call succeeded.", {
+          endpoint: "AICoach.callAnthropic",
+          model,
+          inputTokens,
+          outputTokens,
+          estimatedCostUsd,
+        });
+
+        return {
+          text: extractTextFromAnthropicContent(response.content),
+          usage: {
+            inputTokens,
+            outputTokens,
+            estimatedCostUsd,
+            model,
+          },
+        };
       } catch (error) {
         const status = this.getErrorStatus(error);
         if (attempt < MAX_API_RETRIES && this.isRetryableStatus(status)) {
@@ -459,6 +509,14 @@ export class AICoach {
           continue;
         }
 
+        logger.error("Anthropic call failed.", {
+          endpoint: "AICoach.callAnthropic",
+          model,
+          status: status ?? "unknown",
+          promptLength: prompt.length,
+          retryAttempt: attempt,
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       }
     }
@@ -472,34 +530,121 @@ export class AICoach {
     normalize: (value: unknown) => T | null;
     maxTokens: number;
     model?: string;
-  }): Promise<T> {
-    const firstRaw = await this.callAnthropic(
+  }): Promise<ParsedResponseWithUsage<T>> {
+    const firstCall = await this.callAnthropic(
       params.prompt,
       params.maxTokens,
       params.model ?? MODEL_VERSION,
     );
+    const firstRaw = firstCall.text;
 
     try {
       const parsed = params.normalize(parseJson(firstRaw));
       if (parsed) {
-        return parsed;
+        return {
+          parsed,
+          usage: firstCall.usage,
+        };
       }
     } catch {
       // Retry below with shorter prompt.
     }
 
-    const secondRaw = await this.callAnthropic(
+    const secondCall = await this.callAnthropic(
       params.shorterPrompt,
       params.maxTokens,
       params.model ?? MODEL_VERSION,
     );
+    const secondRaw = secondCall.text;
     const parsedSecond = params.normalize(parseJson(secondRaw));
 
     if (!parsedSecond) {
       throw new Error("AI response was not valid JSON in the expected schema.");
     }
 
-    return parsedSecond;
+    return {
+      parsed: parsedSecond,
+      usage: {
+        inputTokens: firstCall.usage.inputTokens + secondCall.usage.inputTokens,
+        outputTokens: firstCall.usage.outputTokens + secondCall.usage.outputTokens,
+        estimatedCostUsd:
+          firstCall.usage.estimatedCostUsd + secondCall.usage.estimatedCostUsd,
+        model: params.model ?? MODEL_VERSION,
+      },
+    };
+  }
+
+  private getModelFamily(model: string): ModelFamily {
+    const normalized = model.toLowerCase();
+    if (normalized.includes("opus")) {
+      return "opus";
+    }
+    if (normalized.includes("sonnet")) {
+      return "sonnet";
+    }
+    return "unknown";
+  }
+
+  private estimateCallCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+    const family = this.getModelFamily(model);
+    const inputPerMillion =
+      family === "opus"
+        ? 15
+        : family === "sonnet"
+          ? 3
+          : 10;
+    const outputPerMillion =
+      family === "opus"
+        ? 75
+        : family === "sonnet"
+          ? 15
+          : 50;
+
+    const inputCost = (Math.max(0, inputTokens) / 1_000_000) * inputPerMillion;
+    const outputCost = (Math.max(0, outputTokens) / 1_000_000) * outputPerMillion;
+    return Number((inputCost + outputCost).toFixed(6));
+  }
+
+  private getDailySpendLimitUsd(): number {
+    const parsed = Number(process.env.AI_DAILY_SPEND_LIMIT_USD ?? 50);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 50;
+    }
+    return parsed;
+  }
+
+  private startOfUtcDay(): Date {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  }
+
+  private async getTodayAICostUsd(): Promise<number> {
+    if (!process.env.DATABASE_URL) {
+      return 0;
+    }
+
+    const dayStart = this.startOfUtcDay();
+    const rows = await db
+      .select({
+        total: sql<string>`coalesce(sum(${schema.aiAnalyses.estimatedCost}), 0)`,
+      })
+      .from(schema.aiAnalyses)
+      .where(gte(schema.aiAnalyses.createdAt, dayStart))
+      .limit(1);
+
+    const parsed = Number(rows[0]?.total ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private async assertSpendCircuitBreaker(): Promise<void> {
+    const limit = this.getDailySpendLimitUsd();
+    const currentSpend = await this.getTodayAICostUsd();
+
+    if (currentSpend >= limit) {
+      throw new AICircuitBreakerError(
+        "AI coaching is temporarily at capacity. Stats and graphs are still available.",
+      );
+    }
   }
 
   private async getCachedMatchAnalysis(
@@ -542,6 +687,7 @@ export class AICoach {
     matchId: string;
     playerPuuid: string;
     analysis: MatchAnalysisOutput;
+    usage: AIUsageSummary;
   }): Promise<void> {
     if (!process.env.DATABASE_URL) {
       return;
@@ -557,6 +703,9 @@ export class AICoach {
           analysisJson: params.analysis,
           coachingText: params.analysis.summary,
           modelVersion: MODEL_VERSION,
+          inputTokens: params.usage.inputTokens,
+          outputTokens: params.usage.outputTokens,
+          estimatedCost: params.usage.estimatedCostUsd.toFixed(6),
           createdAt: new Date(),
         })
         .onConflictDoUpdate({
@@ -569,11 +718,41 @@ export class AICoach {
             analysisJson: params.analysis,
             coachingText: params.analysis.summary,
             modelVersion: MODEL_VERSION,
+            inputTokens: params.usage.inputTokens,
+            outputTokens: params.usage.outputTokens,
+            estimatedCost: params.usage.estimatedCostUsd.toFixed(6),
             createdAt: new Date(),
           },
         });
     } catch (error) {
       console.error("[AICoach] Failed to cache match analysis:", error);
+    }
+  }
+
+  private async logAnalysisUsage(params: AnalysisLogParams): Promise<void> {
+    if (!process.env.DATABASE_URL) {
+      return;
+    }
+
+    try {
+      await db.insert(schema.aiAnalyses).values({
+        matchId: params.matchId ?? null,
+        puuid: params.puuid ?? "unknown",
+        analysisType: params.analysisType,
+        analysisJson: params.analysisJson,
+        coachingText: params.coachingText,
+        modelVersion: params.modelVersion,
+        inputTokens: params.usage.inputTokens,
+        outputTokens: params.usage.outputTokens,
+        estimatedCost: params.usage.estimatedCostUsd.toFixed(6),
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      logger.warn("Failed to write AI usage row.", {
+        endpoint: "AICoach.logAnalysisUsage",
+        analysisType: params.analysisType,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -718,13 +897,20 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
         await this.saveCachedMatchAnalysis({
           matchId,
           playerPuuid,
-          analysis,
+          analysis: analysis.parsed,
+          usage: analysis.usage,
         });
       }
 
-      return analysis;
+      return analysis.parsed;
     } catch (error) {
-      console.error("[AICoach] analyzeMatch failed:", error);
+      if (error instanceof AICircuitBreakerError) {
+        return fallbackMatchAnalysis(error.message);
+      }
+      logger.error("analyzeMatch failed.", {
+        endpoint: "AICoach.analyzeMatch",
+        error: error instanceof Error ? error.message : String(error),
+      });
       return fallbackMatchAnalysis(
         "AI analysis is temporarily unavailable. Please retry in a minute.",
       );
@@ -732,6 +918,7 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
   }
 
   async detectPatterns(params: {
+    playerPuuid?: string;
     playerInfo: { gameName: string; tagLine: string; tier: string; division: string };
     recentGames: GameSummary[];
     detectedPatterns: StatPattern[];
@@ -797,14 +984,30 @@ ${JSON.stringify({
         model: SONNET_MODEL_VERSION,
       });
 
-      this.patternCache.set(cacheKey, {
-        expiresAt: Date.now() + CACHE_TTL_MS,
-        value: analysis,
+      await this.logAnalysisUsage({
+        matchId: null,
+        puuid: params.playerPuuid,
+        analysisType: "pattern_detect",
+        modelVersion: SONNET_MODEL_VERSION,
+        coachingText: analysis.parsed.overall_coaching_plan,
+        analysisJson: analysis.parsed,
+        usage: analysis.usage,
       });
 
-      return analysis;
+      this.patternCache.set(cacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        value: analysis.parsed,
+      });
+
+      return analysis.parsed;
     } catch (error) {
-      console.error("[AICoach] detectPatterns failed:", error);
+      if (error instanceof AICircuitBreakerError) {
+        return fallbackPatternAnalysis(error.message);
+      }
+      logger.error("detectPatterns failed.", {
+        endpoint: "AICoach.detectPatterns",
+        error: error instanceof Error ? error.message : String(error),
+      });
       return fallbackPatternAnalysis(
         "Pattern analysis is temporarily unavailable. Please retry shortly.",
       );
@@ -812,6 +1015,7 @@ ${JSON.stringify({
   }
 
   async scoutLiveGame(params: {
+    playerPuuid?: string;
     ourChampion: string;
     ourRole: string;
     ourRank: string;
@@ -906,14 +1110,30 @@ ${JSON.stringify({
         maxTokens: 2500,
       });
 
-      this.scoutCache.set(cacheKey, {
-        expiresAt: Date.now() + CACHE_TTL_MS,
-        value: analysis,
+      await this.logAnalysisUsage({
+        matchId: null,
+        puuid: params.playerPuuid,
+        analysisType: "live_scout",
+        modelVersion: MODEL_VERSION,
+        coachingText: analysis.parsed.team_fight_plan.how_to_win_fights,
+        analysisJson: analysis.parsed,
+        usage: analysis.usage,
       });
 
-      return analysis;
+      this.scoutCache.set(cacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        value: analysis.parsed,
+      });
+
+      return analysis.parsed;
     } catch (error) {
-      console.error("[AICoach] scoutLiveGame failed:", error);
+      if (error instanceof AICircuitBreakerError) {
+        return fallbackLiveScout(error.message);
+      }
+      logger.error("scoutLiveGame failed.", {
+        endpoint: "AICoach.scoutLiveGame",
+        error: error instanceof Error ? error.message : String(error),
+      });
       return fallbackLiveScout(
         "Live scout is temporarily unavailable. Please retry shortly.",
       );

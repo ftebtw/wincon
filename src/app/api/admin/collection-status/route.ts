@@ -1,5 +1,6 @@
 import { count, desc, eq, like } from "drizzle-orm";
 
+import { getChampionTagDatasetStatus } from "@/lib/comp-classifier";
 import { getCurrentPatch } from "@/lib/data-collector";
 import { db, schema } from "@/lib/db";
 
@@ -45,6 +46,7 @@ export async function GET() {
       .from(schema.championStats)
       .where(eq(schema.championStats.isStale, true)),
   ]);
+  const championTagStatus = getChampionTagDatasetStatus(currentPatch);
 
   return Response.json({
     totalMatches: Number(totalMatchesRow[0]?.count ?? 0),
@@ -54,6 +56,7 @@ export async function GET() {
     currentPatchChampionRows: Number(currentPatchChampionRows[0]?.count ?? 0),
     staleBuildRows: Number(staleBuildRows[0]?.count ?? 0),
     staleChampionRows: Number(staleChampionRows[0]?.count ?? 0),
+    championTagDataset: championTagStatus,
     recentJobs,
   });
 }

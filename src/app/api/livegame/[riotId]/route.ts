@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { aiCoach } from "@/lib/ai-coach";
+import { aiRateLimiter } from "@/lib/ai-rate-limiter";
 import { abilityDataService } from "@/lib/ability-data";
 import { assetService } from "@/lib/asset-service";
 import { cachedRiotAPI } from "@/lib/cache";
@@ -14,6 +15,16 @@ import { getChampions, getItems, getSummonerSpells } from "@/lib/data-dragon";
 import { matchupGuideService } from "@/lib/matchup-guide";
 import { opggClient } from "@/lib/opgg-mcp";
 import { getProMatchupTip } from "@/lib/pro-insights";
+import {
+  buildPlatformCandidates,
+  buildRegionalCandidates,
+  getRegionConfig,
+  getRegionFromPlatform,
+  getRegionFromRequest,
+  inferPlatformFromTagLine,
+  inferRegionFromTagLine,
+  type Region,
+} from "@/lib/regions";
 import { RiotAPIError } from "@/lib/riot-api";
 import type {
   CurrentGameParticipantDto,
@@ -22,28 +33,6 @@ import type {
   MatchTimelineDto,
   ParticipantDto,
 } from "@/lib/types/riot";
-
-const PLATFORM_TO_REGION: Record<string, string> = {
-  na1: "americas",
-  br1: "americas",
-  la1: "americas",
-  la2: "americas",
-  oc1: "americas",
-  euw1: "europe",
-  eun1: "europe",
-  tr1: "europe",
-  ru: "europe",
-  kr: "asia",
-  jp1: "asia",
-  ph2: "sea",
-  sg2: "sea",
-  th2: "sea",
-  tw2: "sea",
-  vn2: "sea",
-};
-
-const ALL_REGIONS = ["americas", "europe", "asia", "sea"] as const;
-const ALL_PLATFORMS = Object.keys(PLATFORM_TO_REGION);
 
 const ROLE_ORDER = ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"] as const;
 type Role = (typeof ROLE_ORDER)[number];
@@ -114,38 +103,31 @@ function parseRiotIdSlug(riotIdSlug: string): { gameName: string; tagLine: strin
   return { gameName, tagLine };
 }
 
-function resolvePlatform(tagLine: string): string | undefined {
-  const normalized = tagLine.toLowerCase();
-  return normalized in PLATFORM_TO_REGION ? normalized : undefined;
+function getPlatformCandidates(tagLine: string, preferredRegion: Region): string[] {
+  const inferredPlatform = inferPlatformFromTagLine(tagLine);
+  return buildPlatformCandidates({
+    preferredRegion,
+    inferredPlatform,
+  });
 }
 
-function getPlatformCandidates(tagLine: string): string[] {
-  const inferred = resolvePlatform(tagLine);
-
-  if (!inferred) {
-    return [...ALL_PLATFORMS];
-  }
-
-  return [inferred, ...ALL_PLATFORMS.filter((platform) => platform !== inferred)];
+function getRegionCandidates(tagLine: string, preferredRegion: Region): string[] {
+  const inferredRegion = inferRegionFromTagLine(tagLine);
+  const inferredRegional = inferredRegion
+    ? getRegionConfig(inferredRegion).regional
+    : undefined;
+  return buildRegionalCandidates({
+    preferredRegion,
+    inferredRegional,
+  });
 }
 
-function getRegionCandidates(tagLine: string): string[] {
-  const platform = resolvePlatform(tagLine);
-  const inferredRegion = platform ? PLATFORM_TO_REGION[platform] : undefined;
-
-  if (!inferredRegion) {
-    return [...ALL_REGIONS];
-  }
-
-  return [inferredRegion, ...ALL_REGIONS.filter((region) => region !== inferredRegion)];
-}
-
-function getRegionForPlatform(platform: string): string {
-  return PLATFORM_TO_REGION[platform] ?? "americas";
-}
-
-async function fetchAccountWithFallback(gameName: string, tagLine: string) {
-  for (const region of getRegionCandidates(tagLine)) {
+async function fetchAccountWithFallback(
+  gameName: string,
+  tagLine: string,
+  preferredRegion: Region,
+) {
+  for (const region of getRegionCandidates(tagLine, preferredRegion)) {
     try {
       const account = await cachedRiotAPI.getAccountByRiotId(gameName, tagLine, region);
       return { account, region };
@@ -165,14 +147,19 @@ async function fetchAccountWithFallback(gameName: string, tagLine: string) {
   });
 }
 
-async function fetchSummonerWithFallback(puuid: string, tagLine: string) {
-  for (const platform of getPlatformCandidates(tagLine)) {
+async function fetchSummonerWithFallback(
+  puuid: string,
+  tagLine: string,
+  preferredRegion: Region,
+) {
+  for (const platform of getPlatformCandidates(tagLine, preferredRegion)) {
     try {
       const summoner = await cachedRiotAPI.getSummonerByPuuid(puuid, platform);
+      const region = getRegionFromPlatform(platform) ?? preferredRegion;
       return {
         summoner,
         platform,
-        region: getRegionForPlatform(platform),
+        region: getRegionConfig(region).regional,
       };
     } catch (error) {
       if (error instanceof RiotAPIError && error.status === 404) {
@@ -668,6 +655,7 @@ function formatCounterList(
 }
 
 export async function GET(_request: Request, { params }: LiveGameRouteContext) {
+  const selectedRegion = getRegionFromRequest(_request);
   const { riotId } = await params;
   const parsedRiotId = parseRiotIdSlug(riotId);
 
@@ -681,8 +669,16 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
   const { gameName, tagLine } = parsedRiotId;
 
   try {
-    const { account } = await fetchAccountWithFallback(gameName, tagLine);
-    const { summoner, platform, region } = await fetchSummonerWithFallback(account.puuid, tagLine);
+    const { account } = await fetchAccountWithFallback(
+      gameName,
+      tagLine,
+      selectedRegion,
+    );
+    const { summoner, platform, region } = await fetchSummonerWithFallback(
+      account.puuid,
+      tagLine,
+      selectedRegion,
+    );
 
     const [activeGame, ourRankedStats, championsById, spellsMap, itemsMap] = await Promise.all([
       cachedRiotAPI.getActiveGame(account.puuid, platform),
@@ -893,48 +889,89 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
     const allyTeamForAi = formatTeamForAi(allyParticipants);
     const enemyTeamForAi = formatTeamForAi(enemyParticipants);
 
-    const aiScout = await aiCoach.scoutLiveGame({
-      ourChampion: ourParticipant.championName,
-      ourRole: roleShort(ourParticipant.role),
-      ourRank,
-      allyTeam: allyTeamForAi,
-      enemyTeam: enemyTeamForAi,
-      allyCompTags: compAnalysis.ally.tags.join(", "),
-      enemyCompTags: compAnalysis.enemy.tags.join(", "),
-      abilityMatchupContext: abilityMatchupContext ?? undefined,
-      matchupGuideSummary: matchupGuide?.summary,
-      matchupGuideTips: matchupGuide?.tips ?? [],
-      opggCounterContext: opggCounterContext ?? undefined,
-      enemyLaner: {
-        name: laneOpponentStats.name,
-        champion: laneOpponentStats.championName,
-        role: laneOpponentStats.role,
-        rank: laneOpponentStats.rank,
-        games: laneOpponentStats.sampleSize,
-        winRate:
-          laneOpponentStats.sampleSize > 0
-            ? Number((Number(laneOpponentStats.recentRecord.split("W-")[0]) / laneOpponentStats.sampleSize).toFixed(2))
-            : 0,
-        kda: Number(laneOpponentStats.avgKDA) || 0,
-        recentRecord: laneOpponentStats.recentRecord,
-        avgKDA: laneOpponentStats.avgKDA,
-        firstItem: laneOpponentStats.firstItem,
-        spells: laneOpponentStats.preferredSpells,
-        aggression: laneOpponentStats.aggression,
-        keyThreat: laneOpponentStats.keyThreat,
-        laneStyle: laneOpponentStats.playstyle,
-      },
-      allEnemies: allEnemyStats.map((enemy) => ({
-        name: enemy.name,
-        champion: enemy.championName,
-        role: roleShort(enemy.role),
-        rank: enemy.rank,
-        recentRecord: enemy.recentRecord,
-        keyThreat: enemy.keyThreat,
-        winRate: enemy.sampleSize > 0 ? Number(enemy.recentRecord.split("W-")[0]) / enemy.sampleSize : undefined,
-        avgKDA: enemy.avgKDA,
-      })),
-    });
+    const scoutRateLimit = aiRateLimiter.consume(_request, { userId: account.puuid });
+    const aiScout = scoutRateLimit.allowed
+      ? await aiCoach.scoutLiveGame({
+          playerPuuid: account.puuid,
+          ourChampion: ourParticipant.championName,
+          ourRole: roleShort(ourParticipant.role),
+          ourRank,
+          allyTeam: allyTeamForAi,
+          enemyTeam: enemyTeamForAi,
+          allyCompTags: compAnalysis.ally.tags.join(", "),
+          enemyCompTags: compAnalysis.enemy.tags.join(", "),
+          abilityMatchupContext: abilityMatchupContext ?? undefined,
+          matchupGuideSummary: matchupGuide?.summary,
+          matchupGuideTips: matchupGuide?.tips ?? [],
+          opggCounterContext: opggCounterContext ?? undefined,
+          enemyLaner: {
+            name: laneOpponentStats.name,
+            champion: laneOpponentStats.championName,
+            role: laneOpponentStats.role,
+            rank: laneOpponentStats.rank,
+            games: laneOpponentStats.sampleSize,
+            winRate:
+              laneOpponentStats.sampleSize > 0
+                ? Number(
+                    (
+                      Number(laneOpponentStats.recentRecord.split("W-")[0]) /
+                      laneOpponentStats.sampleSize
+                    ).toFixed(2),
+                  )
+                : 0,
+            kda: Number(laneOpponentStats.avgKDA) || 0,
+            recentRecord: laneOpponentStats.recentRecord,
+            avgKDA: laneOpponentStats.avgKDA,
+            firstItem: laneOpponentStats.firstItem,
+            spells: laneOpponentStats.preferredSpells,
+            aggression: laneOpponentStats.aggression,
+            keyThreat: laneOpponentStats.keyThreat,
+            laneStyle: laneOpponentStats.playstyle,
+          },
+          allEnemies: allEnemyStats.map((enemy) => ({
+            name: enemy.name,
+            champion: enemy.championName,
+            role: roleShort(enemy.role),
+            rank: enemy.rank,
+            recentRecord: enemy.recentRecord,
+            keyThreat: enemy.keyThreat,
+            winRate:
+              enemy.sampleSize > 0
+                ? Number(enemy.recentRecord.split("W-")[0]) / enemy.sampleSize
+                : undefined,
+            avgKDA: enemy.avgKDA,
+          })),
+        })
+      : {
+          lane_matchup: {
+            difficulty: "medium",
+            their_win_condition: "AI scout rate limit reached for today.",
+            your_win_condition: "Use comp tags and lane matchup basics for now.",
+            power_spikes: "Unavailable due to AI daily limit.",
+            key_ability_to_watch: "Unavailable due to AI daily limit.",
+          },
+          enemy_player_tendencies: {
+            playstyle: "Unavailable due to AI daily limit.",
+            exploitable_weaknesses: [],
+            danger_zones: [],
+          },
+          team_fight_plan: {
+            their_comp_identity: "Unavailable due to AI daily limit.",
+            our_comp_identity: "Unavailable due to AI daily limit.",
+            how_to_win_fights:
+              "You've used your 3 free AI analyses today. Come back tomorrow or create an account for more.",
+          },
+          recommended_build_path: {
+            core_items: [],
+            reasoning:
+              "AI build path is unavailable due to today's AI usage limit.",
+          },
+          three_things_to_remember: [
+            "You've used your 3 free AI analyses today.",
+            "Comp tags and enemy stats are still available below.",
+            "Come back tomorrow or create an account for more.",
+          ],
+        };
     const mergedThreeThings = uniqueLines([
       ...(matchupGuide?.tips?.slice(0, 2) ?? []),
       ...aiScout.three_things_to_remember,
@@ -1011,6 +1048,7 @@ export async function GET(_request: Request, { params }: LiveGameRouteContext) {
 
     return NextResponse.json({
       inGame: true,
+      aiRateLimited: !scoutRateLimit.allowed,
       loadingMoreData,
       checkedAt: new Date().toISOString(),
       game: {
