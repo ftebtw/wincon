@@ -19,6 +19,8 @@ import type {
 
 const OPUS_MODEL_VERSION = process.env.ANTHROPIC_OPUS_MODEL ?? "claude-opus-4-6";
 const SONNET_MODEL_VERSION = process.env.ANTHROPIC_SONNET_MODEL ?? "claude-sonnet-4-6";
+const MATCH_ANALYSIS_PRIMARY_MODEL =
+  process.env.ANTHROPIC_MATCH_ANALYSIS_MODEL ?? SONNET_MODEL_VERSION;
 const MODEL_VERSION = OPUS_MODEL_VERSION;
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_API_RETRIES = 3;
@@ -907,6 +909,10 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
 `.trim();
 
     try {
+      const fallbackModel =
+        MATCH_ANALYSIS_PRIMARY_MODEL === OPUS_MODEL_VERSION
+          ? SONNET_MODEL_VERSION
+          : OPUS_MODEL_VERSION;
       let analysis: ParsedResponseWithUsage<MatchAnalysisOutput>;
       try {
         analysis = await this.generateJsonResponse<MatchAnalysisOutput>({
@@ -914,15 +920,17 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
           shorterPrompt: buildPrompt(truncatedMatch),
           normalize: normalizeMatchAnalysis,
           maxTokens: 4096,
-          model: OPUS_MODEL_VERSION,
+          model: MATCH_ANALYSIS_PRIMARY_MODEL,
         });
       } catch (error) {
         if (error instanceof AICircuitBreakerError) {
           throw error;
         }
 
-        logger.warn("Opus match analysis failed, retrying with Sonnet.", {
+        logger.warn("Primary match analysis model failed, retrying with fallback.", {
           endpoint: "AICoach.analyzeMatch",
+          primaryModel: MATCH_ANALYSIS_PRIMARY_MODEL,
+          fallbackModel,
           error: error instanceof Error ? error.message : String(error),
         });
 
@@ -931,7 +939,7 @@ Respond ONLY with valid JSON. No markdown fences, no preamble, no explanation ou
           shorterPrompt: buildPrompt(truncatedMatch),
           normalize: normalizeMatchAnalysis,
           maxTokens: 4096,
-          model: SONNET_MODEL_VERSION,
+          model: fallbackModel,
         });
       }
 

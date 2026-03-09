@@ -40,7 +40,7 @@ type AnalysisRouteContext = {
 
 // Option A timeout handling for serverless AI calls.
 // TODO: migrate to streaming responses for better UX.
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 function parsePatchFromGameVersion(gameVersion: string): string {
   const [major, minor] = gameVersion.split(".");
