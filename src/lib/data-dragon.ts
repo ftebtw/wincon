@@ -83,11 +83,27 @@ function normalizeChampionName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function normalizeVersionValue(rawValue: string | undefined): string | null {
+  if (!rawValue) {
+    return null;
+  }
+
+  const trimmed = rawValue.trim().replace(/^['"]|['"]$/g, "");
+  if (!/^\d+\.\d+\.\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  return trimmed;
+}
+
 function fallbackVersion() {
-  return process.env.NEXT_PUBLIC_DATA_DRAGON_VERSION ?? "14.1.1";
+  return normalizeVersionValue(process.env.NEXT_PUBLIC_DATA_DRAGON_VERSION) ?? "16.5.1";
 }
 
 function getKnownVersion() {
+  if (!versionCache && !versionPromise) {
+    void getLatestVersion().catch(() => undefined);
+  }
   return versionCache?.value ?? fallbackVersion();
 }
 
