@@ -1,36 +1,147 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WinCon.gg
 
-## Getting Started
+AI-powered League of Legends coaching platform built on Next.js.
 
-First, run the development server:
+This repo includes:
+- Player search and match analysis
+- Win probability + key moments + deep play-by-play
+- WPA (Win Probability Added) per-player attribution
+- Matchup guides + Meraki ability data
+- CDragon + PBE diff preview
+- Pro section (historical + live)
+- OP.GG MCP integration
+- Contextual build engine
+- Similar game search ("What Would a Pro Do?")
+- Private betting research tools (password-protected)
 
+## Tech Stack
+
+- Next.js 16 + React 19 + TypeScript
+- PostgreSQL + Drizzle ORM
+- Anthropic API (Opus/Sonnet)
+- Riot API
+- OP.GG MCP
+- OddsPapi + Polymarket integrations (private module)
+
+## Quick Start
+
+1. Install dependencies:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Copy env template:
+```bash
+cp .env.example .env.local
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Fill required vars in `.env.local`:
+- `RIOT_API_KEY`
+- `DATABASE_URL`
+- `ANTHROPIC_API_KEY`
+- `CRON_SECRET`
+- `NEXT_PUBLIC_DATA_DRAGON_VERSION`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. Push schema:
+```bash
+npm run db:push
+```
 
-## Learn More
+5. Run the app:
+```bash
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+6. Open:
+- `http://localhost:3000`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment Variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Core:
+- `RIOT_API_KEY`: Riot API key
+- `DATABASE_URL`: Postgres connection string
+- `ANTHROPIC_API_KEY`: Claude API key
+- `CRON_SECRET`: shared secret for cron endpoints (`Authorization: Bearer <secret>`)
+- `NEXT_PUBLIC_DATA_DRAGON_VERSION`: Data Dragon patch version
 
-## Deploy on Vercel
+Feature flags and integrations:
+- `ENABLE_OPGG`
+- `OPGG_MCP_URL`
+- `ENABLE_ESPORTS_LIVE`
+- `ODDSPAPI_API_KEY`
+- `BETTING_ADMIN_PASSWORD`
+- `POLYMARKET_API_KEY`
+- `POLYMARKET_API_SECRET`
+- `POLYMARKET_PASSPHRASE`
+- `BETTING_ENABLED`
+- `BETTING_DRY_RUN`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Use `.env.example` as the source of truth for the full list.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Scripts
+
+- `npm run dev`: start local app
+- `npm run build`: production build
+- `npm run start`: run production server
+- `npm run lint`: lint project
+- `npm run db:push`: apply Drizzle schema to DB
+- `npm run db:generate`: generate migrations
+- `npm run db:studio`: open Drizzle Studio
+- `npm run backtest`: run betting backtest script
+
+Other scripts in `scripts/`:
+- `seed-matchup-guides.ts`
+- `seed-builds.ts`
+- `seed-vectors.ts`
+- `initial-collection.ts`
+- `generate-threat-map.ts`
+- `scrape-pro-accounts.ts`
+- `run-backtest.ts`
+
+## Key Routes
+
+Pages:
+- `/` Home
+- `/player/[riotId]` Player overview
+- `/match/[matchId]` Match analysis
+- `/livegame/[riotId]` Loading-screen scout
+- `/matchup/[matchupId]` Matchup guide
+- `/champions` Champion tier/meta pages
+- `/pro` Pro section
+- `/pbe` PBE preview
+- `/private/betting` Private betting dashboard
+
+API:
+- `/api/player/[riotId]`
+- `/api/match/[matchId]`
+- `/api/livegame/[riotId]`
+- `/api/matchup/[matchupId]`
+- `/api/build`
+- `/api/similar`
+- `/api/pro/*`
+- `/api/pbe`
+- `/api/cron/*`
+- `/api/private/*`
+
+## Cron Jobs
+
+Configured in `vercel.json`:
+- `/api/cron/collect`
+- `/api/cron/compute-stats`
+- `/api/cron/import-pro-data`
+- `/api/cron/patch-check`
+- `/api/cron/pbe-check`
+- `/api/cron/compute-progress`
+
+All cron routes require `Authorization: Bearer <CRON_SECRET>`.
+
+## Private Betting Module
+
+- Private routes are protected in middleware.
+- Access is disabled unless `BETTING_ADMIN_PASSWORD` is set.
+- Keep this section unlinked from public nav/sitemap if deploying publicly.
+
+## Notes
+
+- Do not commit real API keys or secrets.
+- This codebase expects a live Postgres DB for most non-trivial flows.
