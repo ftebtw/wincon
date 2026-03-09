@@ -95,31 +95,40 @@ function parseRiotIdSlug(riotId: string): { gameName: string; tagLine: string } 
 }
 
 const fetchPlayerData = cache(async (riotId: string): Promise<PlayerPageState> => {
-  const headerStore = await headers();
-  const baseUrl = getBaseUrl(headerStore);
+  try {
+    const headerStore = await headers();
+    const baseUrl = getBaseUrl(headerStore);
 
-  const response = await fetch(
-    `${baseUrl}/api/player/${encodeURIComponent(riotId)}`,
-    { cache: "no-store" },
-  );
+    const response = await fetch(
+      `${baseUrl}/api/player/${encodeURIComponent(riotId)}`,
+      { cache: "no-store" },
+    );
 
-  if (!response.ok) {
-    let message = "Failed to load player profile.";
+    if (!response.ok) {
+      let message = "Failed to load player profile.";
 
-    try {
-      const body = (await response.json()) as { error?: string };
-      if (body.error) {
-        message = body.error;
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (body.error) {
+          message = body.error;
+        }
+      } catch {
+        // Ignore parse issues and keep fallback message.
       }
-    } catch {
-      // Ignore parse issues and keep fallback message.
+
+      return { ok: false, status: response.status, message };
     }
 
-    return { ok: false, status: response.status, message };
+    const data = (await response.json()) as PlayerLookupResponse;
+    return { ok: true, data };
+  } catch (error) {
+    console.error("[PlayerPage] Failed to fetch player data:", error);
+    return {
+      ok: false,
+      status: 503,
+      message: "Player profile is temporarily unavailable. Please try again.",
+    };
   }
-
-  const data = (await response.json()) as PlayerLookupResponse;
-  return { ok: true, data };
 });
 
 function RankCard({
@@ -286,7 +295,17 @@ export default async function PlayerPage({ params }: PlayerPageProps) {
   const soloQueue = rankedStats.find((entry) => entry.queueType === "RANKED_SOLO_5x5");
   const flexQueue = rankedStats.find((entry) => entry.queueType === "RANKED_FLEX_SR");
   const liveGame = result.data.activeGame;
-  const liveChampion = liveGame ? await getChampionById(liveGame.championId) : undefined;
+  let liveChampion:
+    | Awaited<ReturnType<typeof getChampionById>>
+    | undefined;
+  if (liveGame) {
+    try {
+      liveChampion = await getChampionById(liveGame.championId);
+    } catch (error) {
+      console.error("[PlayerPage] Failed to load live champion metadata:", error);
+      liveChampion = undefined;
+    }
+  }
   const liveGameDuration = liveGame
     ? formatElapsedGameDuration(liveGame.gameStartTime)
     : null;
@@ -336,32 +355,36 @@ export default async function PlayerPage({ params }: PlayerPageProps) {
   let championStatsStaleWarning: string | null = null;
   let pbeAffectedChampions: string[] = [];
   if (process.env.DATABASE_URL) {
-    const patchStateRows = await db
-      .select()
-      .from(schema.patchState)
-      .orderBy(desc(schema.patchState.detectedAt))
-      .limit(1);
+    try {
+      const patchStateRows = await db
+        .select()
+        .from(schema.patchState)
+        .orderBy(desc(schema.patchState.detectedAt))
+        .limit(1);
 
-    const latestPatchState = patchStateRows[0];
-    if (latestPatchState?.championStatsStale) {
-      const currentPatch = await patchTracker.getCurrentPatch();
-      championStatsStaleWarning = `Champion stats are being recalculated for patch ${currentPatch}.`;
-    }
+      const latestPatchState = patchStateRows[0];
+      if (latestPatchState?.championStatsStale) {
+        const currentPatch = await patchTracker.getCurrentPatch();
+        championStatsStaleWarning = `Champion stats are being recalculated for patch ${currentPatch}.`;
+      }
 
-    const pbeRows = await db
-      .select({ diffReport: schema.pbeDiffs.diffReport })
-      .from(schema.pbeDiffs)
-      .where(eq(schema.pbeDiffs.isLatest, true))
-      .limit(1);
+      const pbeRows = await db
+        .select({ diffReport: schema.pbeDiffs.diffReport })
+        .from(schema.pbeDiffs)
+        .where(eq(schema.pbeDiffs.isLatest, true))
+        .limit(1);
 
-    const changedChampions = parsePBEChangedChampions(pbeRows[0]?.diffReport);
-    if (changedChampions.length > 0) {
-      const recentChampionSet = new Set(
-        recentMatches.map((match) => match.champion.toLowerCase()),
-      );
-      pbeAffectedChampions = changedChampions.filter((champion) =>
-        recentChampionSet.has(champion.toLowerCase()),
-      );
+      const changedChampions = parsePBEChangedChampions(pbeRows[0]?.diffReport);
+      if (changedChampions.length > 0) {
+        const recentChampionSet = new Set(
+          recentMatches.map((match) => match.champion.toLowerCase()),
+        );
+        pbeAffectedChampions = changedChampions.filter((champion) =>
+          recentChampionSet.has(champion.toLowerCase()),
+        );
+      }
+    } catch (error) {
+      console.error("[PlayerPage] Failed to load patch/pbe metadata:", error);
     }
   }
 
