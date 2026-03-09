@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { and, eq, gte, sql } from "drizzle-orm";
+import { jsonrepair } from "jsonrepair";
 
 import { db, schema } from "@/lib/db";
 import type { CompactedMatchData } from "@/lib/match-compactor";
@@ -217,7 +218,12 @@ function parseJson(text: string): unknown {
     }
 
     const withoutTrailingCommas = cleaned.replace(/,\s*([}\]])/g, "$1");
-    return JSON.parse(withoutTrailingCommas);
+    try {
+      return JSON.parse(withoutTrailingCommas);
+    } catch {
+      const repaired = jsonrepair(cleaned);
+      return JSON.parse(repaired);
+    }
   }
 }
 
