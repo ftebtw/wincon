@@ -461,7 +461,7 @@ Write 3-4 concise paragraphs:
 
     try {
       const response = await client.messages.create({
-        model: "claude-sonnet-4-6-20250514",
+        model: process.env.ANTHROPIC_SONNET_MODEL ?? "claude-sonnet-4-6",
         max_tokens: 1000,
         messages: [{ role: "user", content: prompt }],
       });

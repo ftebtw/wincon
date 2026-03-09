@@ -8,7 +8,7 @@ import {
 } from "@/lib/game-state-encoder";
 import type { MatchDto, MatchTimelineDto } from "@/lib/types/riot";
 
-const SONNET_MODEL = "claude-sonnet-4-6-20250514";
+const SONNET_MODEL = process.env.ANTHROPIC_SONNET_MODEL ?? "claude-sonnet-4-6";
 const ENABLE_AI_INSIGHT = process.env.ENABLE_SIMILARITY_AI_INSIGHT === "true";
 
 const ROLE_FILTERS = new Set(["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"]);

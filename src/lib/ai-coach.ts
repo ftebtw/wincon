@@ -17,8 +17,8 @@ import type {
   StatPattern,
 } from "@/lib/types/analysis";
 
-const OPUS_MODEL_VERSION = "claude-opus-4-6-20250610";
-const SONNET_MODEL_VERSION = "claude-sonnet-4-6-20250514";
+const OPUS_MODEL_VERSION = process.env.ANTHROPIC_OPUS_MODEL ?? "claude-opus-4-6";
+const SONNET_MODEL_VERSION = process.env.ANTHROPIC_SONNET_MODEL ?? "claude-sonnet-4-6";
 const MODEL_VERSION = OPUS_MODEL_VERSION;
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_API_RETRIES = 3;

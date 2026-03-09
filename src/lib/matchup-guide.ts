@@ -53,7 +53,7 @@ type CommonMatchupRow = {
   winRate: number;
 };
 
-const MATCHUP_MODEL = process.env.MATCHUP_GUIDE_MODEL ?? "claude-sonnet-4-6-20250514";
+const MATCHUP_MODEL = process.env.MATCHUP_GUIDE_MODEL ?? "claude-sonnet-4-6";
 
 function normalizeName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
