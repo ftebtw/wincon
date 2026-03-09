@@ -496,13 +496,14 @@ export class DataCollector {
           continue;
         }
 
-        if (!entry.summonerId) {
+        const summonerId = entry.summonerId;
+        if (!summonerId) {
           continue;
         }
 
         const summoner = await this.withBackoff(
-          `resolve summoner ${entry.summonerId} (${platform})`,
-          () => this.riotAPI.getSummonerById(entry.summonerId, platform, "low"),
+          `resolve summoner ${summonerId} (${platform})`,
+          () => this.riotAPI.getSummonerById(summonerId, platform, "low"),
         );
 
         if (summoner?.puuid) {
