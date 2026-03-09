@@ -7,7 +7,18 @@ export function getBettingAdminCookieName(): string {
 }
 
 export function getBettingAdminPassword(): string {
-  return process.env.BETTING_ADMIN_PASSWORD ?? "";
+  const raw = process.env.BETTING_ADMIN_PASSWORD ?? "";
+  const trimmed = raw.trim();
+
+  if (trimmed.length >= 2) {
+    const startsWithDouble = trimmed.startsWith("\"") && trimmed.endsWith("\"");
+    const startsWithSingle = trimmed.startsWith("'") && trimmed.endsWith("'");
+    if (startsWithDouble || startsWithSingle) {
+      return trimmed.slice(1, -1).trim();
+    }
+  }
+
+  return trimmed;
 }
 
 export function isBettingAccessEnabled(): boolean {
