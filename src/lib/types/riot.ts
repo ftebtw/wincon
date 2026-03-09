@@ -39,8 +39,9 @@ export interface LeagueEntryDto {
 export type HighEloTier = "CHALLENGER" | "GRANDMASTER" | "MASTER";
 
 export interface LeagueListEntryDto {
-  summonerId: string;
-  summonerName: string;
+  summonerId?: string;
+  summonerName?: string;
+  puuid?: string;
   leaguePoints: number;
   rank: string;
   wins: number;

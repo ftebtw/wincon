@@ -486,6 +486,20 @@ export class DataCollector {
       }
 
       for (const entry of league.entries) {
+        const region = getRegionFromPlatform(platform);
+        const regionalRouting = region ? getRegionConfig(region).regional : "americas";
+
+        if (entry.puuid) {
+          puuids.add(entry.puuid);
+          this.playerRegionByPuuid.set(entry.puuid, regionalRouting);
+          await this.backgroundDelay();
+          continue;
+        }
+
+        if (!entry.summonerId) {
+          continue;
+        }
+
         const summoner = await this.withBackoff(
           `resolve summoner ${entry.summonerId} (${platform})`,
           () => this.riotAPI.getSummonerById(entry.summonerId, platform, "low"),
@@ -493,11 +507,7 @@ export class DataCollector {
 
         if (summoner?.puuid) {
           puuids.add(summoner.puuid);
-          const region = getRegionFromPlatform(platform);
-          this.playerRegionByPuuid.set(
-            summoner.puuid,
-            region ? getRegionConfig(region).regional : "americas",
-          );
+          this.playerRegionByPuuid.set(summoner.puuid, regionalRouting);
         }
 
         await this.backgroundDelay();
