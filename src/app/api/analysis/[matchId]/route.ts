@@ -325,6 +325,8 @@ async function getCachedAnalysis(matchId: string, playerPuuid: string): Promise<
     }
 
     const analysis = cached[0].analysisJson as MatchAnalysisOutput;
+    const unavailable = (value: unknown) =>
+      typeof value !== "string" || /unavailable/i.test(value);
     const summary = String(analysis.summary ?? "").toLowerCase();
     const hasFallbackSummary =
       summary.includes("temporarily unavailable") ||
@@ -335,8 +337,17 @@ async function getCachedAnalysis(matchId: string, playerPuuid: string): Promise<
       analysis.laning_phase.tips.some((tip) =>
         String(tip).toLowerCase().includes("try again shortly"),
       );
+    const hasIncompleteSections =
+      unavailable(analysis.laning_phase?.cs_assessment) ||
+      unavailable(analysis.laning_phase?.trade_patterns) ||
+      unavailable(analysis.macro_assessment?.objective_participation) ||
+      unavailable(analysis.macro_assessment?.map_presence) ||
+      !Array.isArray(analysis.laning_phase?.tips) ||
+      analysis.laning_phase.tips.length === 0 ||
+      !Array.isArray(analysis.macro_assessment?.tips) ||
+      analysis.macro_assessment.tips.length === 0;
 
-    if (hasFallbackSummary || hasFallbackTips) {
+    if (hasFallbackSummary || hasFallbackTips || hasIncompleteSections) {
       return null;
     }
 
